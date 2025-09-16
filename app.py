@@ -1103,7 +1103,17 @@ if st.session_state.processed_excel_data_info_full:
         preview_data_info_list = []
 
         for data_info_preview in selected_data_for_llm:
-            title = f"Vista: {data_info_preview['file_name']} - {data_info_preview['sheet_name']}"
+            # Validar y limpiar los nombres de archivo y hoja
+            file_name = str(data_info_preview.get('file_name', 'Archivo')).strip()
+            sheet_name = str(data_info_preview.get('sheet_name', 'Hoja')).strip()
+            
+            # Asegurar que no estén vacíos
+            if not file_name or file_name == 'None':
+                file_name = f"Archivo_{len(preview_tab_titles)+1}"
+            if not sheet_name or sheet_name == 'None':
+                sheet_name = f"Hoja_{len(preview_tab_titles)+1}"
+            
+            title = f"Vista: {file_name} - {sheet_name}"
             # Truncar títulos largos para pestañas
             title = title[:50] + '...' if len(title) > 50 else title
             preview_tab_titles.append(title)
@@ -1111,21 +1121,59 @@ if st.session_state.processed_excel_data_info_full:
         
         if preview_tab_titles:
             try:
-                preview_tabs = st.tabs(preview_tab_titles)
+                # Validación adicional de títulos antes de crear pestañas
+                valid_titles = []
+                for i, title in enumerate(preview_tab_titles):
+                    if isinstance(title, str) and len(title.strip()) > 0:
+                        valid_titles.append(title.strip())
+                    else:
+                        valid_titles.append(f"Vista {i+1}")
+                
+                # Asegurar que no hay títulos duplicados
+                final_titles = []
+                seen_titles = {}
+                for title in valid_titles:
+                    if title in seen_titles:
+                        seen_titles[title] += 1
+                        final_titles.append(f"{title} ({seen_titles[title]})")
+                    else:
+                        seen_titles[title] = 1
+                        final_titles.append(title)
+                
+                preview_tabs = st.tabs(final_titles)
                 for i, tab_preview in enumerate(preview_tabs):
                     with tab_preview:
-                        data_info_current = preview_data_info_list[i]
-                        key_preview = data_info_current['file_sheet_key']
-                        if key_preview in st.session_state.all_dfs_for_charts:
-                            df_display = st.session_state.all_dfs_for_charts[key_preview]
-                            # Corregir tipos de datos problemáticos para Arrow/Streamlit
-                            df_display_fixed = fix_dataframe_for_display(df_display)
-                            st.dataframe(df_display_fixed.head(10), width='stretch')
-                            st.caption(f"Dimensiones originales de la hoja: {data_info_current['rows_original']} filas. Filas procesadas para análisis/JSON: {data_info_current['rows_processed']}.")
+                        if i < len(preview_data_info_list):
+                            data_info_current = preview_data_info_list[i]
+                            key_preview = data_info_current['file_sheet_key']
+                            if key_preview in st.session_state.all_dfs_for_charts:
+                                df_display = st.session_state.all_dfs_for_charts[key_preview]
+                                # Corregir tipos de datos problemáticos para Arrow/Streamlit
+                                df_display_fixed = fix_dataframe_for_display(df_display)
+                                st.dataframe(df_display_fixed.head(10), width='stretch')
+                                st.caption(f"Dimensiones originales de la hoja: {data_info_current['rows_original']} filas. Filas procesadas para análisis/JSON: {data_info_current['rows_processed']}.")
+                            else:
+                                st.warning(f"No se pudo cargar la vista previa para {key_preview}.")
                         else:
-                            st.warning(f"No se pudo cargar la vista previa para {key_preview}.")
+                            st.warning("Datos no disponibles para esta pestaña.")
             except Exception as e_tabs:
-                st.error(f"Error al crear pestañas de vista previa: {e_tabs}.")
+                st.error(f"Error al crear pestañas de vista previa: {str(e_tabs)}")
+                st.error(f"Debug - Títulos: {preview_tab_titles}")
+                st.error(f"Debug - Tipos: {[type(t).__name__ for t in preview_tab_titles]}")
+                # Fallback: mostrar datos sin pestañas
+                st.subheader("Vista previa de datos (sin pestañas)")
+                for i, data_info_current in enumerate(preview_data_info_list):
+                    file_name_display = str(data_info_current.get('file_name', f'Archivo_{i+1}'))
+                    sheet_name_display = str(data_info_current.get('sheet_name', f'Hoja_{i+1}'))
+                    st.markdown(f"**{file_name_display} - {sheet_name_display}**")
+                    key_preview = data_info_current['file_sheet_key']
+                    if key_preview in st.session_state.all_dfs_for_charts:
+                        df_display = st.session_state.all_dfs_for_charts[key_preview]
+                        df_display_fixed = fix_dataframe_for_display(df_display)
+                        st.dataframe(df_display_fixed.head(10), width='stretch')
+                    else:
+                        st.warning(f"No se pudo cargar la vista previa para {key_preview}")
+                    st.divider()
     
 elif not uploaded_files:
     st.info("☝️ Por favor, carga uno o dos archivos Excel desde la barra lateral para comenzar.")
