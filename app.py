@@ -804,8 +804,11 @@ if st.session_state.processed_excel_data_info_full:
                         data_info_current = preview_data_info_list[i]
                         key_preview = data_info_current['file_sheet_key']
                         if key_preview in st.session_state.all_dfs_for_charts:
-                            df_display = st.session_state.all_dfs_for_charts[key_preview] 
-                            st.dataframe(df_display.head(10), use_container_width=True)
+                            df_display = st.session_state.all_dfs_for_charts[key_preview]
+                            # Corregir tipo de columna problemático para Arrow
+                            if "Unnamed: 0" in df_display.columns:
+                                df_display["Unnamed: 0"] = df_display["Unnamed: 0"].astype(str)
+                            st.dataframe(df_display.head(10), width='stretch')
                             st.caption(f"Dimensiones originales de la hoja: {data_info_current['rows_original']} filas. Filas procesadas para análisis/JSON: {data_info_current['rows_processed']}.")
                         else:
                             st.warning(f"No se pudo cargar la vista previa para {key_preview}.")
@@ -892,7 +895,7 @@ if st.session_state.get("llm_response"):
 
             if len(generated_plotly_charts) == 1:
                 fig, desc = generated_plotly_charts[0]
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
                 if desc: st.caption(f"**Descripción:** {desc}")
             elif len(generated_plotly_charts) > 1:
                 chart_tab_titles_base = [
@@ -919,20 +922,20 @@ if st.session_state.get("llm_response"):
                         chart_display_tabs = st.tabs(final_chart_tabs_titles)
                         for i, (fig, desc) in enumerate(generated_plotly_charts):
                             with chart_display_tabs[i]:
-                                st.plotly_chart(fig, use_container_width=True)
+                                st.plotly_chart(fig, width='stretch')
                                 if desc: st.caption(f"**Descripción:** {desc}")
                     except Exception as e_chart_tabs:
                         st.error(f"Error al crear pestañas de gráficos: {e_chart_tabs}. Mostrando gráficos secuencialmente.")
                         for fig_idx, (fig_item, desc_item) in enumerate(generated_plotly_charts):
                             title_fallback = final_chart_tabs_titles[fig_idx] if fig_idx < len(final_chart_tabs_titles) else f"Gráfico {fig_idx+1}"
                             st.subheader(title_fallback)
-                            st.plotly_chart(fig_item, use_container_width=True)
+                            st.plotly_chart(fig_item, width='stretch')
                             if desc_item: st.caption(f"**Descripción:** {desc_item}")
                 else: # Fallback si los títulos no se generaron bien
                      st.warning("No se pudieron generar títulos para las pestañas de gráficos. Mostrando secuencialmente.")
                      for fig_idx, (fig_item, desc_item) in enumerate(generated_plotly_charts):
                         st.subheader(f"Gráfico {fig_idx+1}")
-                        st.plotly_chart(fig_item, use_container_width=True)
+                        st.plotly_chart(fig_item, width='stretch')
                         if desc_item: st.caption(f"**Descripción:** {desc_item}")
 
         elif generate_visualizations and "SUGERENCIAS_DE_VISUALIZACIÓN" in (st.session_state.llm_response or ""):
