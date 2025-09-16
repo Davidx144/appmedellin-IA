@@ -21,7 +21,7 @@ APPIA_MAX_INPUT_TOKENS = 2097152  # Máximo para modelos AppIA avanzados
 APPIA_MAX_OUTPUT_TOKENS = 8192    # Máximo de salida
 
 # Configuración predeterminada
-DEFAULT_MODEL = "gemini-1.5-pro-latest"  # Modelo estable y disponible
+DEFAULT_MODEL = "gemini-2.5-pro"  # Modelo estable y disponible
 DEFAULT_MAX_ROWS = 20000  # Análisis más completo por defecto
 DEFAULT_INCLUDE_STATS = True  # Siempre incluir análisis estadístico
 DEFAULT_GENERATE_CHARTS = True  # Siempre generar gráficos automáticamente
@@ -294,7 +294,7 @@ SUGERENCIAS_DE_VISUALIZACIÓN:
     base_prompt = f"""
 Eres un asistente experto en análisis de datos de Excel, especialista en contabilidad, finanzas y comparación inteligente de documentos.
 Se te proporcionará información estructurada (metadatos, nombres de columnas, tipos de datos, resumen estadístico y una muestra de datos en formato JSON) de una o múltiples hojas de cálculo de Excel previamente seleccionadas por el usuario.
-
+Procura no decir que tienes pocos datos, intenta hacer las relaciones siempre.
 ## RESPONSABILIDADES PRINCIPALES:
 
 ### 🏦 ANÁLISIS ESPECÍFICO DE DATOS BANCARIOS (CRÍTICO):
@@ -1210,7 +1210,7 @@ if st.button("🚀 Analizar y Preguntar", type="primary", use_container_width=Tr
                 <div style="text-align: center; background: white; padding: 3rem; 
                            border-radius: 15px; box-shadow: 0 8px 32px rgba(0,0,0,0.1); 
                            border: 1px solid rgba(255,255,255,0.2);">
-                    <h1 style="color: #1E88E5; margin-bottom: 2rem;">🤖 AppIA está procesando</h1>
+                    <h1 style="color: #1E88E5; margin-bottom: 2rem;">🤖 App Medellin IA está procesando</h1>
                     <div style="font-size: 1.2rem; color: #666; margin-bottom: 2rem; line-height: 1.6;">
                         🔍 <strong>Analizando datos...</strong><br>
                         📊 <strong>Identificando patrones...</strong><br>
