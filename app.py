@@ -11,6 +11,20 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go # Para gráficos más complejos si es necesario
 import re
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
+
+# Configuración de tokens máximos para Gemini
+GEMINI_MAX_INPUT_TOKENS = 2097152  # Máximo para gemini-1.5-pro y gemini-1.5-flash
+GEMINI_MAX_OUTPUT_TOKENS = 8192    # Máximo de salida
+
+# Configuración predeterminada
+DEFAULT_MODEL = "gemini-1.5-pro-latest"  # Modelo estable y disponible
+DEFAULT_MAX_ROWS = 20000  # Análisis más completo por defecto
+DEFAULT_INCLUDE_STATS = True  # Siempre incluir análisis estadístico
+DEFAULT_GENERATE_CHARTS = True  # Siempre generar gráficos automáticamente
 
 # --- Configuración Inicial y Funciones de Ayuda ---
 
@@ -43,6 +57,62 @@ def convert_datetime_keys(obj):
         return None
     else:
         return obj
+
+def fix_dataframe_for_display(df):
+    """Corrige tipos de datos problemáticos para Arrow/Streamlit."""
+    df_fixed = df.copy()
+    
+    # Corregir todas las columnas 'Unnamed' que pueden tener tipos mezclados
+    for col in df_fixed.columns:
+        if str(col).startswith('Unnamed:') or df_fixed[col].dtype == 'object':
+            # Convertir a string para evitar tipos mezclados
+            df_fixed[col] = df_fixed[col].astype(str)
+    
+    # Convertir columnas datetime problemáticas
+    for col in df_fixed.select_dtypes(include=['datetime64', 'datetime64[ns]', 'datetime', 'datetimetz']).columns:
+        df_fixed[col] = df_fixed[col].astype(str)
+    
+    # Manejar valores NaN/None
+    df_fixed = df_fixed.fillna('')
+    
+    return df_fixed
+
+
+def fix_dataframe_for_plotting(df):
+    """Prepara un DataFrame específicamente para gráficos de Plotly."""
+    df_plot = df.copy()
+    
+    # Para gráficos, necesitamos mantener tipos numéricos cuando sea posible
+    for col in df_plot.columns:
+        if str(col).startswith('Unnamed:'):
+            # Si la columna Unnamed contiene solo números, mantenerla como numérica
+            try:
+                # Intentar convertir a numérico, pero solo si la mayoría de valores son números
+                numeric_col = pd.to_numeric(df_plot[col], errors='coerce')
+                if numeric_col.notna().sum() > len(df_plot) * 0.8:  # 80% de valores válidos
+                    df_plot[col] = numeric_col.fillna(0)
+                else:
+                    df_plot[col] = df_plot[col].astype(str)
+            except:
+                df_plot[col] = df_plot[col].astype(str)
+        elif df_plot[col].dtype == 'object':
+            # Para columnas de objeto, intentar mantener como están si no causan problemas
+            try:
+                # Si contiene valores mixtos, convertir a string
+                if df_plot[col].apply(type).nunique() > 1:
+                    df_plot[col] = df_plot[col].astype(str)
+            except:
+                df_plot[col] = df_plot[col].astype(str)
+    
+    # Convertir columnas datetime a string para gráficos
+    for col in df_plot.select_dtypes(include=['datetime64', 'datetime64[ns]', 'datetime', 'datetimetz']).columns:
+        df_plot[col] = df_plot[col].astype(str)
+    
+    # Manejar valores NaN/None
+    df_plot = df_plot.fillna(0)  # Para gráficos, usamos 0 en lugar de string vacío
+    
+    return df_plot
+
 
 def process_dataframe_for_json(df):
     """Prepara un DataFrame para serialización JSON segura."""
@@ -85,8 +155,28 @@ def get_single_excel_data_info(excel_file_bytes, file_name, max_rows_limit, incl
     # st.write(f"Procesando archivo: **{file_name}** (Hojas encontradas: {', '.join(sheet_names)})") # Movido a la UI principal
 
     for sheet_name in sheet_names:
-        df = pd.read_excel(excel_data, sheet_name=sheet_name)
-        original_rows = len(df)
+        try:
+            df = pd.read_excel(excel_data, sheet_name=sheet_name)
+            
+            # Aplicar correcciones tempranas para evitar problemas con tipos de datos
+            # Esto previene errores de Arrow más adelante
+            for col in df.columns:
+                if str(col).startswith('Unnamed:'):
+                    # Las columnas Unnamed suelen tener problemas de tipos mixtos
+                    df[col] = df[col].astype(str)
+                elif df[col].dtype == 'object':
+                    # Verificar si hay tipos mixtos en columnas de objeto
+                    try:
+                        unique_types = df[col].dropna().apply(type).nunique()
+                        if unique_types > 1:
+                            df[col] = df[col].astype(str)
+                    except:
+                        df[col] = df[col].astype(str)
+            
+            original_rows = len(df)
+        except Exception as e:
+            st.error(f"Error al procesar la hoja '{sheet_name}' del archivo '{file_name}': {e}")
+            continue
 
         # MEJORA 3: Asegurar que se limita el df ANTES de procesarlo para JSON
         if len(df) > max_rows_limit:
@@ -97,7 +187,9 @@ def get_single_excel_data_info(excel_file_bytes, file_name, max_rows_limit, incl
         
         file_sheet_key = f"{file_name}__{sheet_name}"
         # Guardar el DataFrame (limitado por max_rows_limit) para gráficos y vista previa
-        dataframes_for_charts[file_sheet_key] = df_limited.copy() 
+        # Aplicar correcciones de tipos de datos antes de guardar
+        df_for_storage = fix_dataframe_for_display(df_limited)
+        dataframes_for_charts[file_sheet_key] = df_for_storage.copy() 
         
         datos_completos_json_safe = process_dataframe_for_json(df_limited)
         
@@ -196,8 +288,7 @@ def query_gemini_api(api_key, model_name, system_prompt_text, messages_content_f
         system_instruction=system_prompt_text,
         generation_config=genai.types.GenerationConfig(
             max_output_tokens=max_output_tokens,
-            # Considerar añadir temperature si se quiere más creatividad o determinismo
-            # temperature=0.7 
+            temperature=0.7  # Configuración óptima para análisis de datos
         )
     )
     try:
@@ -221,18 +312,35 @@ def query_gemini_api(api_key, model_name, system_prompt_text, messages_content_f
         response = model.generate_content(user_prompt_text) 
         return response.text
     except Exception as e:
-        if hasattr(e, 'message') and "quota" in str(e).lower(): # Convertir e a str para búsqueda
+        error_msg = str(e).lower()
+        if "quota" in error_msg:
              return f"Error al consultar a Gemini: Se ha excedido la cuota de la API. Por favor, revisa tu plan y uso en Google AI Studio. (Detalle: {str(e)})"
-        if hasattr(e, 'message') and "API key not valid" in str(e):
+        elif "api key not valid" in error_msg:
             return f"Error al consultar a Gemini: La API key no es válida. Por favor, verifica tu API Key. (Detalle: {str(e)})"
-        # Captura de errores más genéricos de la API de Gemini
-        if "response.prompt_feedback" in str(e) and "block_reason" in str(e):
+        elif "not found" in error_msg or "not supported" in error_msg:
+            return f"Error al consultar a Gemini: El modelo '{model_name}' no está disponible. Esto puede deberse a que el modelo no existe o no está disponible en tu región. (Detalle: {str(e)})"
+        elif "response.prompt_feedback" in error_msg and "block_reason" in error_msg:
             return f"Error al consultar a Gemini: La solicitud fue bloqueada por políticas de seguridad. (Detalle: {str(e)})"
-        return f"Error al consultar a Gemini: {str(e)}"
+        else:
+            return f"Error al consultar a Gemini: {str(e)}"
 
 
-def query_llm(api_key, model_name, selected_sheets_data_info, question, generate_charts_flag, max_output_tokens_config): 
+def query_llm(selected_sheets_data_info, question, generate_charts_flag=True): 
     """Prepara y envía la consulta al LLM Gemini."""
+    
+    # Obtener API key desde variables de entorno
+    api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
+    if not api_key:
+        return "Error: No se encontró la API key de Gemini. Por favor, configura GOOGLE_GEMINI_API_KEY en el archivo .env"
+    
+    # Lista de modelos en orden de preferencia
+    models_to_try = [
+        "gemini-1.5-pro-latest",
+        "gemini-1.5-flash-latest", 
+        "gemini-pro"
+    ]
+    
+    max_output_tokens_config = GEMINI_MAX_OUTPUT_TOKENS
     
     system_prompt = get_system_prompt(generate_charts_flag) 
     
@@ -322,8 +430,23 @@ def query_llm(api_key, model_name, selected_sheets_data_info, question, generate
     # pero solo se usará el texto concatenado.
     messages_for_llm = [{"role": "user", "content": [{"type": "text", "text": final_user_prompt_text}]}]
 
-
-    return query_gemini_api(api_key, model_name, system_prompt, messages_for_llm, max_output_tokens_config)
+    # Intentar con diferentes modelos en orden de preferencia
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            result = query_gemini_api(api_key, model_name, system_prompt, messages_for_llm, max_output_tokens_config)
+            # Si no hay error en el resultado, retornarlo
+            if not result.startswith("Error al consultar a Gemini:"):
+                return result
+            else:
+                last_error = result
+                continue
+        except Exception as e:
+            last_error = f"Error con modelo {model_name}: {str(e)}"
+            continue
+    
+    # Si llegamos aquí, ningún modelo funcionó
+    return last_error or "Error: No se pudo conectar con ningún modelo de Gemini disponible."
 
 
 # --- Generación y Extracción de Gráficos ---
@@ -373,7 +496,9 @@ def generate_charts(chart_specs, all_dataframes_dict):
             if df_source is None or df_source.empty:
                 st.warning(f"Gráfico {spec_idx+1} ('{spec.get('titulo', 'Desconocido')}'): DataFrame para '{file_sheet_key}' está vacío o no disponible. Saltando.")
                 continue
-            df = df_source.copy() 
+            
+            # Preparar DataFrame específicamente para gráficos
+            df = fix_dataframe_for_plotting(df_source.copy())
             
             tipo = spec.get("tipo", "").lower()
             titulo = spec.get("titulo", f"Gráfico {tipo.capitalize()} {spec_idx+1}")
@@ -571,8 +696,8 @@ st.markdown("""
 </style>""", unsafe_allow_html=True)
 
 
-st.title("📊 Analizador Contable Multi-Excel con IA")
-st.markdown("Carga uno o dos archivos Excel, selecciona las hojas a analizar/comparar, haz preguntas y obtén análisis, insights y visualizaciones.")
+st.title("📊 Analizador de Excel con IA")
+st.markdown("**Carga tus archivos Excel y haz preguntas en lenguaje natural. La IA analizará los datos y generará respuestas con gráficos automáticamente.**")
 
 # Sidebar
 with st.sidebar:
@@ -584,30 +709,7 @@ with st.sidebar:
         """,
         unsafe_allow_html=True
     )
-    st.markdown("### ⚙️ Configuración Principal")
-
-
-    with st.expander("🔑 Configuración de API Gemini", expanded=True):
-        api_key = st.text_input("Google Gemini API Key:", type="password", key="gemini_api_key", help="Obtén tu API key en [Google AI Studio](https://aistudio.google.com/app/apikey)")
-        
-        gemini_models_list = [
-            "gemini-2.5-pro-preview-05-06",
-            "gemini-1.5-pro-latest", 
-            "gemini-1.5-flash-latest", 
-            "gemini-pro", 
-        ]
-        model_name = st.selectbox(
-            "Modelo:",
-            gemini_models_list, 
-            key="gemini_model",
-            index=1, # Preseleccionar Flash por defecto (más rápido)
-            help="Gemini 1.5 Pro y gemini-2.5-pro: Son los mas avanzados. Gemini 1.5 Flash: Rápido y eficiente. Gemini Pro: Modelo base sólido."
-        )
-        max_output_tokens = st.slider(
-            "Max Tokens de Salida:", 
-            256, 8192, 4096, 128, key="gemini_max_tokens", # Aumentado el mínimo y el paso
-            help="Máximo de tokens que Gemini puede generar en su respuesta. Afecta la longitud y detalle de la respuesta. Modelos tienen límites diferentes."
-        )
+    st.markdown("### ⚙️ Configuración")
 
     st.subheader("📁 Carga de Archivos")
     uploaded_files = st.file_uploader(
@@ -617,18 +719,29 @@ with st.sidebar:
         key="file_uploader"
     )
 
-    st.subheader("🛠️ Opciones de Análisis")
-    max_rows_per_sheet = st.slider(
-        "Max Filas por Hoja (Muestra JSON):", 100, 10000, 1000, 100, key="max_rows_slider", 
-        help="Limita el número de filas de cada hoja cuya muestra de datos se envía al LLM. Los gráficos también usarán estas filas."
-    ) 
-    include_statistics = st.checkbox("Incluir Resumen Estadístico en Prompt", value=True, key="include_stats_checkbox", help="Envía estadísticas descriptivas (media, D.E., etc.) de las filas procesadas al LLM.")
-    generate_visualizations = st.checkbox("Sugerir Visualizaciones por IA", value=True, key="generate_viz_checkbox", help="Permite al LLM sugerir gráficos basados en tu pregunta y los datos.")
-    
-    if st.button("🧹 Limpiar Todo y Reiniciar", key="clear_all_button", type="secondary", use_container_width=True):
+    if st.button("🧹 Limpiar Todo", key="clear_all_button", type="secondary", use_container_width=True):
         for key_to_clear in list(st.session_state.keys()): # Iterar sobre una copia de las claves
             del st.session_state[key_to_clear]
         st.rerun()
+    
+    # Verificar configuración de API
+    api_key_status = os.getenv('GOOGLE_GEMINI_API_KEY')
+    if api_key_status:
+        st.success("✅ API configurada correctamente")
+    else:
+        st.error("❌ API no configurada. Revisa el archivo .env")
+
+    # Mostrar configuración optimizada (solo informativo)
+    with st.expander("ℹ️ Configuración del análisis"):
+        st.markdown(f"""
+        **Configuración optimizada automáticamente:**
+        - 📊 Filas máximas por hoja: **{DEFAULT_MAX_ROWS:,}**
+        - 📈 Gráficos automáticos: **Activado**
+        - 📋 Análisis estadístico: **Activado**
+        - 🤖 Modelo de IA: **Gemini Pro (mejor disponible)**
+        
+        *Estos ajustes garantizan el mejor análisis posible.*
+        """)
 
 
 # --- Lógica Principal de la Aplicación ---
@@ -680,16 +793,21 @@ if uploaded_files and (current_uploaded_files_names != st.session_state.get("las
                 file_data_list, dfs_charts_current_file = get_single_excel_data_info_cached(
                     excel_bytes_value, 
                     uploaded_file_item.name,
-                    max_rows_per_sheet,
-                    include_statistics
+                    DEFAULT_MAX_ROWS,
+                    DEFAULT_INCLUDE_STATS
                 )
                 temp_processed_data_info_full.extend(file_data_list)
                 temp_all_dfs_for_charts.update(dfs_charts_current_file)
-                st.success(f"✅ Archivo '{uploaded_file_item.name}' procesado.")
+                st.success(f"✅ Archivo '{uploaded_file_item.name}' procesado correctamente.")
             except Exception as e:
-                st.error(f"Error al procesar el archivo {uploaded_file_item.name}: {e}")
+                st.error(f"❌ Error al procesar el archivo {uploaded_file_item.name}: {e}")
                 # status_process.update(label=f"Error procesando {uploaded_file_item.name}", state="error") # No hay status_process aquí
                 continue 
+        
+        # Mostrar información sobre correcciones automáticas
+        if temp_processed_data_info_full:
+            st.info("ℹ️ Se aplicaron correcciones automáticas de tipos de datos para garantizar compatibilidad.")
+            
         st.session_state.processed_excel_data_info_full = temp_processed_data_info_full
         st.session_state.all_dfs_for_charts = temp_all_dfs_for_charts
         st.session_state.last_uploaded_files_names = sorted([f.name for f in actual_files_to_process])
@@ -805,10 +923,9 @@ if st.session_state.processed_excel_data_info_full:
                         key_preview = data_info_current['file_sheet_key']
                         if key_preview in st.session_state.all_dfs_for_charts:
                             df_display = st.session_state.all_dfs_for_charts[key_preview]
-                            # Corregir tipo de columna problemático para Arrow
-                            if "Unnamed: 0" in df_display.columns:
-                                df_display["Unnamed: 0"] = df_display["Unnamed: 0"].astype(str)
-                            st.dataframe(df_display.head(10), width='stretch')
+                            # Corregir tipos de datos problemáticos para Arrow/Streamlit
+                            df_display_fixed = fix_dataframe_for_display(df_display)
+                            st.dataframe(df_display_fixed.head(10), width='stretch')
                             st.caption(f"Dimensiones originales de la hoja: {data_info_current['rows_original']} filas. Filas procesadas para análisis/JSON: {data_info_current['rows_processed']}.")
                         else:
                             st.warning(f"No se pudo cargar la vista previa para {key_preview}.")
@@ -828,22 +945,21 @@ user_question = st.text_area(
 )
 
 if st.button("🚀 Analizar y Preguntar", type="primary", use_container_width=True, key="analyze_button"):
-    if not api_key:
-        st.error("Por favor, ingresa tu API key de Gemini en la barra lateral.")
+    # Verificar configuración de API
+    api_key_check = os.getenv('GOOGLE_GEMINI_API_KEY')
+    if not api_key_check:
+        st.error("❌ No se encontró la API key de Gemini. Por favor, configura GOOGLE_GEMINI_API_KEY en el archivo .env")
     elif not user_question:
         st.warning("Por favor, escribe una pregunta.")
     elif not selected_data_for_llm or not sheet_selection_ui_completed: 
         st.warning("Por favor, carga archivos y asegúrate de que las hojas para análisis/comparación estén correctamente seleccionadas y la vista previa se muestre.")
     else:
-        with st.spinner(f"Gemini ({model_name}) está analizando tus datos y generando una respuesta... Este proceso puede tardar unos momentos."):
+        with st.spinner(f"Gemini está analizando tus datos y generando una respuesta... Este proceso puede tardar unos momentos."):
             try:
                 llm_response_text = query_llm(
-                    api_key,
-                    model_name,
                     selected_data_for_llm, 
                     user_question,
-                    generate_visualizations,
-                    max_output_tokens
+                    DEFAULT_GENERATE_CHARTS
                 )
                 st.session_state.llm_response = llm_response_text 
                 
@@ -851,7 +967,7 @@ if st.button("🚀 Analizar y Preguntar", type="primary", use_container_width=Tr
                 st.session_state.cleaned_llm_text = cleaned_llm_text 
                 
                 st.session_state.generated_charts = [] # Limpiar gráficos anteriores
-                if generate_visualizations and llm_response_text:
+                if DEFAULT_GENERATE_CHARTS and llm_response_text:
                     chart_specs_extracted = extract_chart_suggestions(llm_response_text)
                     if chart_specs_extracted:
                         generated_plotly_charts = generate_charts(chart_specs_extracted, st.session_state.all_dfs_for_charts)
@@ -885,7 +1001,7 @@ if st.session_state.get("llm_response"):
             st.text_area("Respuesta Completa:", st.session_state.llm_response or "No hay respuesta completa disponible.", height=300, disabled=True, key="llm_full_response_area")
 
     with col_graficos:
-        if generate_visualizations and st.session_state.get("generated_charts"):
+        if DEFAULT_GENERATE_CHARTS and st.session_state.get("generated_charts"):
             st.subheader("📈 Visualizaciones Sugeridas")
             st.markdown("Los gráficos son interactivos: puedes hacer zoom, moverte y obtener detalles al pasar el cursor.")
             
@@ -938,13 +1054,13 @@ if st.session_state.get("llm_response"):
                         st.plotly_chart(fig_item, width='stretch')
                         if desc_item: st.caption(f"**Descripción:** {desc_item}")
 
-        elif generate_visualizations and "SUGERENCIAS_DE_VISUALIZACIÓN" in (st.session_state.llm_response or ""):
+        elif DEFAULT_GENERATE_CHARTS and "SUGERENCIAS_DE_VISUALIZACIÓN" in (st.session_state.llm_response or ""):
             # Este caso es si hubo sugerencias pero no se pudieron generar los gráficos
             with col_graficos: 
                 st.subheader("📈 Visualizaciones Sugeridas")
                 st.warning("Gemini intentó sugerir visualizaciones, pero no se pudieron extraer o generar correctamente. Revisa la 'Respuesta Completa de Gemini' para ver el JSON.")
         
-        elif generate_visualizations: # Si la opción está activa pero no hay gráficos ni sugerencias
+        elif DEFAULT_GENERATE_CHARTS: # Si la opción está activa pero no hay gráficos ni sugerencias
             with col_graficos:
                 st.subheader("📈 Visualizaciones Sugeridas")
                 st.info("Gemini no sugirió visualizaciones para esta pregunta, o la opción está desactivada, o no se pudieron generar.")
@@ -953,17 +1069,31 @@ if st.session_state.get("llm_response"):
 st.markdown("---")
 st.markdown("""
 ### 📖 Guía Rápida de Uso:
-1.  **🔑 Configura la API:** En la barra lateral, ingresa tu API key de Google Gemini y elige un modelo.
+1.  **� Configuración inicial:** Asegúrate de que la API esté configurada (verifica el indicador en la barra lateral).
 2.  **📁 Carga Archivos:** Sube uno o dos archivos Excel (`.xlsx` o `.xls`).
 3.  **📄 Selecciona Hojas:**
     * **Si cargas 1 archivo:** Selecciona la hoja específica que deseas analizar (si hay más de una).
     * **Si cargas 2 archivos:** Selecciona una hoja de cada archivo para la comparación.
     * Aparecerá una vista previa de las primeras filas de las hojas seleccionadas.
 4.  **🛠️ Ajusta Opciones (Opcional):**
-    * **Max Filas por Hoja (Muestra JSON):** Controla cuántas filas de la muestra de cada hoja seleccionada se envían al LLM.
-    * **Incluir Resumen Estadístico:** Envía estadísticas descriptivas al LLM para un mejor contexto.
-    * **Sugerir Visualizaciones:** Permite que la IA sugiera gráficos relevantes.
+    * **Filas máximas por hoja:** Controla cuántas filas se analizarán de cada hoja.
+    * **Incluir análisis estadístico:** Agrega estadísticas descriptivas al análisis.
+    * **Generar gráficos automáticamente:** La IA creará visualizaciones relevantes.
 5.  **💬 Haz tu Pregunta:** Escribe tu consulta sobre los datos de las hojas seleccionadas.
-6.  **🚀 Analiza:** Presiona "Analizar y Preguntar". La respuesta y los gráficos (si se solicitaron) aparecerán abajo.
+6.  **🚀 Analiza:** Presiona "Analizar y Preguntar". La respuesta y los gráficos aparecerán abajo.
 
+**💡 Nota:** La aplicación está preconfigurada con los mejores ajustes para análisis de datos. No necesitas configurar parámetros técnicos.
 """)
+
+# Mostrar información de configuración al final para desarrolladores
+with st.expander("ℹ️ Información técnica (para desarrolladores)"):
+    models_list = ["gemini-1.5-pro-latest", "gemini-1.5-flash-latest", "gemini-pro"]
+    st.markdown(f"""
+    - **Modelos disponibles:** {", ".join(models_list)} (se prueba automáticamente en orden de preferencia)
+    - **Modelo preferido:** {DEFAULT_MODEL}
+    - **Tokens máximos de entrada:** {GEMINI_MAX_INPUT_TOKENS:,}
+    - **Tokens máximos de salida:** {GEMINI_MAX_OUTPUT_TOKENS:,}
+    - **Filas por defecto:** {DEFAULT_MAX_ROWS}
+    - **Temperatura:** 0.7 (equilibrio entre creatividad y precisión)
+    - **Fallback automático:** Si un modelo no está disponible, se intenta el siguiente
+    """)

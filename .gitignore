@@ -1,1 +1,21 @@
-venv_py312
+# Archivos de configuración y temporales
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+venv_py312/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.DS_Store
+Thumbs.db
+
+# Archivos de Streamlit
+.streamlit/
+
+# Logs
+*.log
