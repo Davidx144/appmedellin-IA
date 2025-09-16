@@ -227,57 +227,102 @@ def get_system_prompt(generate_charts_flag):
     chart_instructions = ""
     if generate_charts_flag:
         chart_instructions = """
-SI LA PREGUNTA REQUIERE VISUALIZACIONES, TU RESPUESTA DEBE INCLUIR UNA SECCIÓN ESPECIAL LLAMADA "SUGERENCIAS_DE_VISUALIZACIÓN"
-CON INSTRUCCIONES PRECISAS EN FORMATO JSON PARA CREAR HASTA 3-4 GRÁFICOS RELEVANTES.
-Si se comparan dos archivos/hojas, puedes sugerir gráficos que muestren datos de ambos (usa la 'file_and_sheet_key' correcta para cada uno).
-Para identificar la fuente de datos de un gráfico, usa 'file_and_sheet_key' que combina el nombre del archivo y la hoja (ej: 'Archivo1__Hoja1').
+## 📈 INSTRUCCIONES PARA VISUALIZACIONES (CRÍTICO):
 
-Usa exactamente este formato para cada gráfico:
+**OBLIGATORIO:** Si la pregunta puede beneficiarse de visualizaciones, DEBES incluir la sección "SUGERENCIAS_DE_VISUALIZACIÓN".
+
+### REGLAS PARA GENERAR GRÁFICOS EXITOSOS:
+
+1. **VALIDACIÓN DE DATOS:**
+   - VERIFICA que las columnas mencionadas existan EXACTAMENTE en los datos proporcionados
+   - Para columnas numéricas, asegúrate de que contengan valores numéricos válidos
+   - Para fechas, verifica que estén en formato de fecha reconocible
+   - Si una columna no existe o está vacía, NO la incluyas en el gráfico
+
+2. **SELECCIÓN INTELIGENTE DE GRÁFICOS:**
+   - **Barras/Líneas:** Para comparar valores numéricos entre categorías o a lo largo del tiempo
+   - **Pastel:** Solo para distribuciones porcentuales con pocas categorías (máximo 7-8)
+   - **Dispersión:** Para mostrar correlaciones entre dos variables numéricas
+   - **Histograma:** Para distribución de una variable numérica
+   - **Cajas:** Para análisis de distribución y outliers
+
+3. **COMPARACIÓN ENTRE DOCUMENTOS:**
+   - Si hay dos archivos, crea gráficos que muestren ambos datasets para comparación
+   - Usa la misma escala y tipo de gráfico para facilitar la comparación
+   - Incluye gráficos que combinen datos de ambos archivos cuando sea relevante
+
+**FORMATO EXACTO REQUERIDO:**
 
 SUGERENCIAS_DE_VISUALIZACIÓN:
 ```json
 [
   {
-    "tipo": "linea | barra | dispersion | pastel | caja | histograma | heatmap | area | sunburst | treemap | funnel | violin | density_heatmap | scatter_matrix",
-    "titulo": "Título descriptivo del gráfico",
-    "file_and_sheet_key": "NombreArchivo__NombreHoja", 
-    "eje_x": "Nombre exacto de la columna para el eje X (o lista para scatter_matrix)",
-    "eje_y": "Nombre exacto de la columna para el eje Y (o lista de columnas para algunos tipos, o dimensiones para scatter_matrix)",
-    "color_por": "Nombre de columna para colorear (opcional)",
-    "agrupar_por": "Nombre de columna para agrupar datos (opcional, antes de graficar)", 
+    "tipo": "barra | linea | dispersion | pastel | caja | histograma | heatmap | area",
+    "titulo": "Título específico y descriptivo del gráfico",
+    "file_and_sheet_key": "NombreArchivoExacto__NombreHojaExacta",
+    "eje_x": "NombreExactoColumnaX",
+    "eje_y": "NombreExactoColumnaY",
+    "color_por": "NombreColumnaParaColorear (opcional)",
+    "agrupar_por": "NombreColumnaParaAgrupar (opcional)",
     "operacion": "sum|mean|count|max|min (solo si hay agrupación)",
-    "path": ["ColumnaNivel1", "ColumnaNivel2"] (para sunburst, treemap),
-    "values_col": "ColumnaDeValores" (para sunburst, treemap, funnel),
-    "names_col": "ColumnaDeNombresOCategorias" (para pastel, funnel),
-    "dimensions": ["Col1", "Col2", "Col3"] (para scatter_matrix, opcional, si no, usa todas las numéricas),
-    "descripcion": "Breve explicación de lo que muestra este gráfico y su relevancia para la pregunta y los datos. Indica si el gráfico es interactivo."
+    "names_col": "ColumnaDeNombres (solo para pastel)",
+    "values_col": "ColumnaDeValores (solo para pastel)",
+    "descripcion": "Explicación detallada de lo que muestra este gráfico y por qué es relevante para el análisis."
   }
 ]
 ```
-Consideraciones para tipos de gráficos:
-- `linea`, `barra`, `area`: `eje_y` puede ser una lista de columnas.
-- `pastel`: `names_col` para las etiquetas de las porciones, `values_col` para los tamaños. `eje_x` y `eje_y` no se usan directamente.
-- `caja`, `violin`: `eje_x` puede ser una categoría, `eje_y` la variable numérica. O `eje_y` una lista de columnas numéricas si `eje_x` no se usa.
-- `histograma`: Solo `eje_x`. `color_por` puede usarse para superponer histogramas.
-- `heatmap`: Usualmente para matrices de correlación. Si es correlación, indícalo.
-- `sunburst`, `treemap`: Requieren `path` (lista de columnas para la jerarquía) y `values_col` (columna numérica para el tamaño).
-- `funnel`: Requiere `values_col` (para los valores de cada etapa) y `names_col` (para los nombres de las etapas).
-- `density_heatmap`: `eje_x`, `eje_y` numéricos.
-- `scatter_matrix`: `dimensions` es una lista de columnas. `color_por` es útil.
 
-Asegúrate de que las columnas mencionadas existan en la 'file_and_sheet_key' especificada y sean del tipo adecuado. Prioriza la claridad y relevancia del gráfico.
+**CRÍTICO:** Solo usa nombres de columnas que aparezcan EXACTAMENTE en los datos JSON proporcionados. No inventes nombres de columnas.
 """
 
     base_prompt = f"""
-Eres un asistente experto en análisis de datos de Excel, especialista en contabilidad y comparación de datos.
+Eres un asistente experto en análisis de datos de Excel, especialista en contabilidad, finanzas y comparación inteligente de documentos.
 Se te proporcionará información estructurada (metadatos, nombres de columnas, tipos de datos, resumen estadístico y una muestra de datos en formato JSON) de una o dos hojas de cálculo de Excel previamente seleccionadas por el usuario.
-Tu tarea es responder preguntas sobre los datos, compararlos si se proporcionan dos hojas/archivos, identificar tendencias, realizar cálculos y ofrecer insights.
+
+## RESPONSABILIDADES PRINCIPALES:
+
+### 📊 ANÁLISIS INDIVIDUAL (1 documento):
+- Proporciona análisis **EXTENSO y DETALLADO** (mínimo 300-500 palabras)
+- Examina tendencias, patrones y anomalías específicas
+- Identifica insights clave y recomendaciones concretas
+- Incluye cálculos relevantes y contexto contable/financiero
+
+### 🔄 ANÁLISIS COMPARATIVO AUTOMÁTICO (2 documentos):
+**IMPORTANTE: Cuando recibas datos de DOS hojas/archivos, SIEMPRE realiza lo siguiente:**
+
+1. **IDENTIFICACIÓN AUTOMÁTICA DE CAMPOS SIMILARES:**
+   - Busca columnas con nombres similares, equivalentes o relacionados entre ambos documentos
+   - Identifica campos que representen conceptos similares (fechas, montos, códigos, categorías, etc.)
+   - Detecta relaciones temáticas incluso si los nombres de columnas difieren
+   - Ejemplo: "Valor Debito" en un documento vs "Débitos" en otro = mismo concepto
+
+2. **COMPARACIÓN ESCALABLE E INTELIGENTE:**
+   - Compara automáticamente valores totales, promedios, rangos y distribuciones
+   - Identifica diferencias significativas y sus posibles causas
+   - Analiza evoluciones temporales si hay datos de fechas
+   - Busca correlaciones y dependencias entre los datasets
+   - Detecta inconsistencias, duplicados o datos faltantes
+
+3. **MAPEO DE RELACIONES:**
+   - Determina si los documentos son complementarios, secuenciales o independientes
+   - Identifica si uno es detalle del otro (ej: transacciones vs balance)
+   - Busca puntos de reconciliación entre ambos documentos
+
+4. **SÍNTESIS INTELIGENTE:**
+   - Proporciona conclusiones integradas que aprovechen información de ambos documentos
+   - Genera insights que solo son posibles con la vista combinada
+   - Sugiere acciones basadas en el análisis conjunto
 
 {chart_instructions}
 
-Analiza la información proporcionada de manera exhaustiva.
-Si se proporcionan datos de dos hojas (posiblemente de diferentes archivos), enfócate en la comparación cuando sea relevante para la pregunta.
-Estructura tu respuesta de forma clara y concisa. Utiliza Markdown para formatear tu respuesta (listas, negritas, etc.).
+## FORMATO DE RESPUESTA REQUERIDO:
+- **EXTENSO:** Mínimo 500-800 palabras para análisis completo
+- **ESTRUCTURADO:** Usa títulos, subtítulos y listas claras
+- **INSIGHTS PROFUNDOS:** No te limites a describir datos, proporciona interpretaciones y recomendaciones
+- **FORMATO MARKDOWN:** Utiliza negritas, listas, tablas y estructura jerárquica
+- **CONTEXTO PROFESIONAL:** Enfoque contable/financiero cuando sea aplicable
+
+Analiza la información proporcionada de manera exhaustiva y proporciona el nivel de detalle que esperaría un profesional contable o financiero.
 """
     return base_prompt
 
@@ -476,63 +521,92 @@ def extract_chart_suggestions(response_text):
         return []
 
 def generate_charts(chart_specs, all_dataframes_dict):
-    """Genera figuras de Plotly basadas en las especificaciones del LLM."""
+    """Genera figuras de Plotly basadas en las especificaciones del LLM con validación robusta."""
     charts = []
-    if not isinstance(chart_specs, list): # Asegurar que chart_specs es una lista
-        st.warning("Las especificaciones de gráficos no son una lista válida.")
+    if not isinstance(chart_specs, list):
+        st.warning("⚠️ Las especificaciones de gráficos no son una lista válida.")
         return []
 
+    st.info(f"🎯 Procesando {len(chart_specs)} sugerencia(s) de gráfico...")
+
     for spec_idx, spec in enumerate(chart_specs):
-        if not isinstance(spec, dict): # Asegurar que cada spec es un diccionario
-            st.warning(f"Especificación de gráfico {spec_idx+1} no es un diccionario válido. Saltando.")
+        if not isinstance(spec, dict):
+            st.warning(f"❌ Gráfico {spec_idx+1}: Especificación no válida (no es diccionario). Saltando.")
             continue
+            
+        # Validación mejorada con información detallada
         try:
             file_sheet_key = spec.get("file_and_sheet_key") 
-            if not file_sheet_key or file_sheet_key not in all_dataframes_dict:
-                st.warning(f"Gráfico {spec_idx+1} ('{spec.get('titulo', 'Desconocido')}'): Clave de archivo/hoja '{file_sheet_key}' no encontrada o no válida. Saltando.")
+            titulo = spec.get("titulo", f"Gráfico {spec_idx+1}")
+            tipo = spec.get("tipo", "").lower()
+            
+            # Validar archivo/hoja
+            if not file_sheet_key:
+                st.error(f"❌ Gráfico '{titulo}': Falta 'file_and_sheet_key'. Saltando.")
+                continue
+                
+            if file_sheet_key not in all_dataframes_dict:
+                st.error(f"❌ Gráfico '{titulo}': Archivo/hoja '{file_sheet_key}' no encontrado. Disponibles: {list(all_dataframes_dict.keys())}")
                 continue
             
             df_source = all_dataframes_dict[file_sheet_key]
             if df_source is None or df_source.empty:
-                st.warning(f"Gráfico {spec_idx+1} ('{spec.get('titulo', 'Desconocido')}'): DataFrame para '{file_sheet_key}' está vacío o no disponible. Saltando.")
+                st.error(f"❌ Gráfico '{titulo}': DataFrame vacío para '{file_sheet_key}'.")
                 continue
             
             # Preparar DataFrame específicamente para gráficos
             df = fix_dataframe_for_plotting(df_source.copy())
             
-            tipo = spec.get("tipo", "").lower()
-            titulo = spec.get("titulo", f"Gráfico {tipo.capitalize()} {spec_idx+1}")
+            # Mostrar información del dataset para depuración
+            st.info(f"📊 Procesando gráfico '{titulo}' (tipo: {tipo}) con dataset de {len(df)} filas y {len(df.columns)} columnas.")
+            
+            # Validar tipo de gráfico
+            tipos_validos = ["barra", "linea", "dispersion", "pastel", "caja", "histograma", "heatmap", "area"]
+            if tipo not in tipos_validos:
+                st.warning(f"⚠️ Gráfico '{titulo}': Tipo '{tipo}' no reconocido. Tipos válidos: {tipos_validos}. Intentando continuar...")
+            
             eje_x = spec.get("eje_x")
             eje_y = spec.get("eje_y") 
             color_por = spec.get("color_por")
-            agrupar_por_col_spec = spec.get("agrupar_por") # Puede ser string o lista
+            agrupar_por_col_spec = spec.get("agrupar_por")
             operacion = spec.get("operacion", "sum")
             
-            path_cols = spec.get("path")
             values_col = spec.get("values_col")
-            names_col = spec.get("names_col") 
+            names_col = spec.get("names_col")
+            path_cols = spec.get("path")
             dimensions_cols = spec.get("dimensions")
 
             def check_cols_exist(cols_to_check, df_columns, chart_title, col_purpose):
-                if not cols_to_check: return True 
-                if isinstance(cols_to_check, str): cols_to_check = [cols_to_check]
-                # Filtrar None o strings vacíos de cols_to_check antes de la validación
+                """Valida que las columnas especificadas existan en el DataFrame con retroalimentación detallada."""
+                if not cols_to_check: 
+                    return True 
+                if isinstance(cols_to_check, str): 
+                    cols_to_check = [cols_to_check]
+                
+                # Filtrar None o strings vacíos
                 valid_cols_to_check = [col for col in cols_to_check if col and isinstance(col, str)]
-                if not valid_cols_to_check: return True # Si después de filtrar no hay nada que chequear
+                if not valid_cols_to_check: 
+                    return True
 
                 missing = [col for col in valid_cols_to_check if col not in df_columns]
                 if missing:
-                    #st.warning(f"Gráfico '{chart_title}': Columna(s) para {col_purpose} no encontradas: {', '.join(missing)}. Columnas disponibles: {', '.join(df_columns)}. Saltando.")
+                    st.error(f"❌ Gráfico '{chart_title}': Columna(s) para {col_purpose} no encontradas: {missing}")
+                    st.info(f"📋 Columnas disponibles en el dataset: {list(df_columns)[:10]}{'...' if len(df_columns) > 10 else ''}")
                     return False
                 return True
 
-            # Validaciones de columnas principales
-            if not check_cols_exist(eje_x, df.columns, titulo, "Eje X"): continue
-            if tipo not in ["histograma", "scatter_matrix", "heatmap", "sunburst", "treemap", "pastel", "funnel"] and \
-               not check_cols_exist(eje_y, df.columns, titulo, "Eje Y"): continue
+            # Mostrar información sobre las columnas del dataset
+            st.info(f"🔍 Dataset '{file_sheet_key}' contiene columnas: {list(df.columns)[:5]}{'...' if len(df.columns) > 5 else ''}")
+
+            # Validaciones de columnas principales con información detallada
+            if not check_cols_exist(eje_x, df.columns, titulo, "Eje X"): 
+                continue
+            if tipo not in ["histograma", "heatmap", "pastel"] and not check_cols_exist(eje_y, df.columns, titulo, "Eje Y"): 
+                continue
             
             if color_por and not check_cols_exist(color_por, df.columns, titulo, "Color Por"):
-                color_por = None # Ignorar si no existe
+                st.warning(f"⚠️ Gráfico '{titulo}': Columna de color '{color_por}' no encontrada. Continuando sin colorear.")
+                color_por = None
             
             agrupar_por_col_list = []
             if agrupar_por_col_spec:
@@ -862,14 +936,20 @@ if st.session_state.processed_excel_data_info_full:
         sheet_options1_map = {f"{s['sheet_name']} ({s['rows_processed']} filas proc.)": s['file_sheet_key'] for s in sheets_in_file1}
         sheet_options2_map = {f"{s['sheet_name']} ({s['rows_processed']} filas proc.)": s['file_sheet_key'] for s in sheets_in_file2}
 
-        col_sel1, col_sel2 = st.columns(2)
+        # Agregar indicadores visuales claros de comparación
+        st.markdown("### 🔄 **Configuración de Comparación entre Documentos**")
+        st.info("⚠️ **Importante:** Selecciona una hoja de cada archivo. El sistema automáticamente **comparará y buscará relaciones** entre ambos documentos.")
+        
+        col_sel1, col_vs, col_sel2 = st.columns([5, 1, 5])
         with col_sel1:
+            st.markdown("#### 📄 **Documento A**")
             if sheets_in_file1:
                 selected_sheet_display1 = st.selectbox(
-                    f"Hoja del Archivo 1 ({file_name1}):",
+                    f"**{file_name1}**",
                     options=list(sheet_options1_map.keys()),
                     key="sheet_select_file1_display",
-                    index=0
+                    index=0,
+                    help="Selecciona la hoja del primer documento que se usará para la comparación"
                 )
                 selected_sheet_key1 = sheet_options1_map.get(selected_sheet_display1)
                 st.session_state.selected_sheet_info_1 = next((s for s in sheets_in_file1 if s['file_sheet_key'] == selected_sheet_key1), None)
@@ -877,14 +957,18 @@ if st.session_state.processed_excel_data_info_full:
                 st.warning(f"El archivo '{file_name1}' no contiene hojas procesables.")
                 st.session_state.selected_sheet_info_1 = None
 
+        with col_vs:
+            st.markdown("<div style='text-align: center; padding-top: 60px;'><h2>⚡<br>VS<br>⚡</h2></div>", unsafe_allow_html=True)
 
         with col_sel2:
+            st.markdown("#### 📄 **Documento B**")
             if sheets_in_file2:
                 selected_sheet_display2 = st.selectbox(
-                    f"Hoja del Archivo 2 ({file_name2}):",
+                    f"**{file_name2}**",
                     options=list(sheet_options2_map.keys()),
                     key="sheet_select_file2_display",
-                    index=0
+                    index=0,
+                    help="Selecciona la hoja del segundo documento que se usará para la comparación"
                 )
                 selected_sheet_key2 = sheet_options2_map.get(selected_sheet_display2)
                 st.session_state.selected_sheet_info_2 = next((s for s in sheets_in_file2 if s['file_sheet_key'] == selected_sheet_key2), None)
@@ -895,9 +979,21 @@ if st.session_state.processed_excel_data_info_full:
         if st.session_state.selected_sheet_info_1 and st.session_state.selected_sheet_info_2:
             selected_data_for_llm = [st.session_state.selected_sheet_info_1, st.session_state.selected_sheet_info_2]
             sheet_selection_ui_completed = True
-            st.markdown(f"Comparando: **{st.session_state.selected_sheet_info_1['sheet_name']}** ({file_name1}) **VS** **{st.session_state.selected_sheet_info_2['sheet_name']}** ({file_name2})")
+            
+            # Mensaje de confirmación más claro y detallado
+            st.success("✅ **Comparación configurada exitosamente**")
+            st.markdown(f"""
+            **📊 Análisis Comparativo:**
+            - **Documento A:** `{st.session_state.selected_sheet_info_1['sheet_name']}` de **{file_name1}**
+            - **Documento B:** `{st.session_state.selected_sheet_info_2['sheet_name']}` de **{file_name2}**
+            
+            🤖 **El modelo automáticamente:**
+            - Identificará campos similares entre ambos documentos
+            - Buscará datos comparables y relaciones
+            - Generará análisis de diferencias y similitudes
+            """)
         elif not (st.session_state.selected_sheet_info_1 and st.session_state.selected_sheet_info_2):
-            st.warning("Por favor, asegúrate de que ambos archivos tengan hojas seleccionables para la comparación.")
+            st.warning("⚠️ **Configuración incompleta:** Asegúrate de seleccionar una hoja válida de cada archivo para habilitar la comparación automática.")
 
 
     # --- Vista Previa de Datos de Hojas Seleccionadas ---
@@ -983,24 +1079,29 @@ if st.button("🚀 Analizar y Preguntar", type="primary", use_container_width=Tr
 # Mostrar resultados si existen
 if st.session_state.get("llm_response"):
     st.divider()
-    col_respuesta, col_graficos = st.columns([2,3]) 
-
-    with col_respuesta:
-        st.subheader("💡 Respuesta del Asistente IA (Gemini)")
+    
+    # Reorganizar la interfaz para respuestas extensas
+    st.markdown("## 📊 **Resultados del Análisis de IA**")
+    
+    # Crear pestañas para mejor organización del contenido expandido
+    tab_analisis, tab_graficos, tab_detalles = st.tabs(["📝 **Análisis Detallado**", "📈 **Visualizaciones**", "🔍 **Información Técnica**"])
+    
+    with tab_analisis:
+        st.markdown("### 💡 **Respuesta del Asistente IA (Gemini)**")
+        
         # Mostrar cleaned_llm_text si existe y no está vacío, sino mostrar llm_response (que podría ser un error)
         response_to_display = st.session_state.cleaned_llm_text if st.session_state.cleaned_llm_text else st.session_state.llm_response
         
         if response_to_display:
-            st.markdown(response_to_display)
+            # Contenedor expandible para respuestas largas
+            with st.container():
+                st.markdown(response_to_display)
         elif st.session_state.llm_response: # Si cleaned es None pero llm_response tiene algo (ej. solo JSON de gráficos)
-             st.info("La respuesta del LLM no contenía texto principal o solo sugerencias de gráficos. Revisa la respuesta completa.")
+             st.info("ℹ️ La respuesta del modelo contenía principalmente sugerencias de gráficos. Revisa la pestaña 'Información Técnica' para ver la respuesta completa.")
         else:
-            st.info("No se generó texto de respuesta o hubo un error.")
-        
-        with st.expander("Ver respuesta completa de Gemini (incluye JSON de gráficos si existe)"):
-            st.text_area("Respuesta Completa:", st.session_state.llm_response or "No hay respuesta completa disponible.", height=300, disabled=True, key="llm_full_response_area")
-
-    with col_graficos:
+            st.warning("⚠️ No se generó texto de respuesta o hubo un error en el proceso.")
+    
+    with tab_graficos:
         if DEFAULT_GENERATE_CHARTS and st.session_state.get("generated_charts"):
             st.subheader("📈 Visualizaciones Sugeridas")
             st.markdown("Los gráficos son interactivos: puedes hacer zoom, moverte y obtener detalles al pasar el cursor.")
@@ -1056,14 +1157,41 @@ if st.session_state.get("llm_response"):
 
         elif DEFAULT_GENERATE_CHARTS and "SUGERENCIAS_DE_VISUALIZACIÓN" in (st.session_state.llm_response or ""):
             # Este caso es si hubo sugerencias pero no se pudieron generar los gráficos
-            with col_graficos: 
-                st.subheader("📈 Visualizaciones Sugeridas")
-                st.warning("Gemini intentó sugerir visualizaciones, pero no se pudieron extraer o generar correctamente. Revisa la 'Respuesta Completa de Gemini' para ver el JSON.")
+            st.subheader("📈 Visualizaciones Sugeridas")
+            st.warning("⚠️ Gemini intentó sugerir visualizaciones, pero no se pudieron extraer o generar correctamente. Revisa la pestaña 'Información Técnica' para ver el JSON completo.")
         
         elif DEFAULT_GENERATE_CHARTS: # Si la opción está activa pero no hay gráficos ni sugerencias
-            with col_graficos:
-                st.subheader("📈 Visualizaciones Sugeridas")
-                st.info("Gemini no sugirió visualizaciones para esta pregunta, o la opción está desactivada, o no se pudieron generar.")
+            st.subheader("📈 Visualizaciones")
+            st.info("ℹ️ Gemini no sugirió visualizaciones específicas para esta consulta, o no se pudieron generar gráficos con los datos disponibles.")
+    
+    with tab_detalles:
+        st.markdown("### 🔍 **Información Técnica**")
+        
+        # Información sobre el procesamiento
+        if st.session_state.get("processed_excel_data_info_full"):
+            st.markdown("#### � **Datos Procesados:**")
+            for info in st.session_state.processed_excel_data_info_full:
+                st.markdown(f"- **{info['file_name']}** → Hoja: `{info['sheet_name']}` ({info['rows_processed']} filas procesadas)")
+        
+        # Respuesta completa del modelo
+        with st.expander("🤖 Ver respuesta completa de Gemini (incluye JSON de gráficos si existe)"):
+            st.text_area(
+                "Respuesta Completa:", 
+                st.session_state.llm_response or "No hay respuesta completa disponible.", 
+                height=400, 
+                disabled=True, 
+                key="llm_full_response_area"
+            )
+        
+        # Información de configuración
+        with st.expander("⚙️ Configuración del análisis"):
+            st.markdown(f"""
+            **Configuración utilizada:**
+            - 📊 Filas máximas procesadas: **{DEFAULT_MAX_ROWS:,}**
+            - 📈 Gráficos automáticos: **{'Activado' if DEFAULT_GENERATE_CHARTS else 'Desactivado'}**
+            - 📋 Análisis estadístico: **{'Incluido' if DEFAULT_INCLUDE_STATS else 'No incluido'}**
+            - 🤖 Modelo de IA: **Gemini (mejor disponible)**
+            """)
 
 
 st.markdown("---")
