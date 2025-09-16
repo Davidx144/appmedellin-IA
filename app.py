@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 # import anthropic # Eliminado
 # import openai # Eliminado
-import google.generativeai as genai # Importar Gemini
+import google.generativeai as genai # Importar motor AppIA
 import os
 import json
 import tempfile
@@ -16,9 +16,9 @@ from dotenv import load_dotenv
 # Cargar variables de entorno
 load_dotenv()
 
-# Configuración de tokens máximos para Gemini
-GEMINI_MAX_INPUT_TOKENS = 2097152  # Máximo para gemini-1.5-pro y gemini-1.5-flash
-GEMINI_MAX_OUTPUT_TOKENS = 8192    # Máximo de salida
+# Configuración de tokens máximos para AppIA
+APPIA_MAX_INPUT_TOKENS = 2097152  # Máximo para modelos AppIA avanzados
+APPIA_MAX_OUTPUT_TOKENS = 8192    # Máximo de salida
 
 # Configuración predeterminada
 DEFAULT_MODEL = "gemini-1.5-pro-latest"  # Modelo estable y disponible
@@ -29,9 +29,25 @@ DEFAULT_GENERATE_CHARTS = True  # Siempre generar gráficos automáticamente
 # --- Configuración Inicial y Funciones de Ayuda ---
 
 def clean_response_text(response_text):
-    """Elimina la sección de sugerencias de visualización del texto de respuesta."""
-    pattern = r"SUGERENCIAS_DE_VISUALIZACIÓN:[\s]*```json\s*([\s\S]*?)\s*```"
-    clean_text = re.sub(pattern, "", response_text)
+    """Elimina la sección de sugerencias de visualización del texto de respuesta de manera robusta."""
+    if not response_text:
+        return ""
+    
+    # Múltiples patrones para capturar diferentes formatos de JSON de visualización
+    patterns = [
+        r"SUGERENCIAS_DE_VISUALIZACIÓN:[\s]*```json\s*([\s\S]*?)\s*```",
+        r"SUGERENCIAS_DE_VISUALIZACIÓN:[\s]*```\s*([\s\S]*?)\s*```",
+        r"```json\s*\[([\s\S]*?)\]\s*```",  # JSON directo en código
+        r"```\s*\[([\s\S]*?)\]\s*```",     # JSON sin especificar lenguaje
+    ]
+    
+    clean_text = response_text
+    for pattern in patterns:
+        clean_text = re.sub(pattern, "", clean_text, flags=re.IGNORECASE)
+    
+    # Limpiar líneas vacías múltiples
+    clean_text = re.sub(r'\n\s*\n\s*\n', '\n\n', clean_text)
+    
     return clean_text.strip()
 
 def convert_datetime_keys(obj):
@@ -223,7 +239,7 @@ def get_single_excel_data_info(excel_file_bytes, file_name, max_rows_limit, incl
 # --- Interacción con LLMs ---
 
 def get_system_prompt(generate_charts_flag): 
-    """Genera el system prompt adaptado para Gemini y la tarea."""
+    """Genera el system prompt adaptado para AppIA y la tarea."""
     chart_instructions = ""
     if generate_charts_flag:
         chart_instructions = """
@@ -277,9 +293,22 @@ SUGERENCIAS_DE_VISUALIZACIÓN:
 
     base_prompt = f"""
 Eres un asistente experto en análisis de datos de Excel, especialista en contabilidad, finanzas y comparación inteligente de documentos.
-Se te proporcionará información estructurada (metadatos, nombres de columnas, tipos de datos, resumen estadístico y una muestra de datos en formato JSON) de una o dos hojas de cálculo de Excel previamente seleccionadas por el usuario.
+Se te proporcionará información estructurada (metadatos, nombres de columnas, tipos de datos, resumen estadístico y una muestra de datos en formato JSON) de una o múltiples hojas de cálculo de Excel previamente seleccionadas por el usuario.
 
 ## RESPONSABILIDADES PRINCIPALES:
+
+### 🏦 ANÁLISIS ESPECÍFICO DE DATOS BANCARIOS (CRÍTICO):
+**IMPORTANTE:** Para datos bancarios, SIEMPRE procesa cada banco/cuenta/entidad de manera INDIVIDUAL:
+- **NUNCA agrupes bancos diferentes** aunque tengan nombres similares (ej: Bancolombia Cuenta-A vs Bancolombia Cuenta-B son DIFERENTES)
+- **Identifica cada banco por su nombre COMPLETO** incluyendo números de cuenta, sucursales, o cualquier identificador único
+- **Analiza cada entidad bancaria por separado** con sus propios totales, promedios, y tendencias
+- **Reporta diferencias entre bancos/cuentas** de manera individual y específica
+- **Lista todos los bancos encontrados** con sus características únicas antes del análisis
+- **Ejemplos de entidades DIFERENTES que NO se deben agrupar:**
+  * Bancolombia-1234 vs Bancolombia-5678 (cuentas diferentes)
+  * Banco Popular Principal vs Banco Popular Sucursal Norte
+  * BBVA Empresarial vs BBVA Personal
+  * Cualquier variación en nombre, número, o denominación
 
 ### 📊 ANÁLISIS INDIVIDUAL (1 documento):
 - Proporciona análisis **EXTENSO y DETALLADO** (mínimo 300-500 palabras)
@@ -287,7 +316,7 @@ Se te proporcionará información estructurada (metadatos, nombres de columnas, 
 - Identifica insights clave y recomendaciones concretas
 - Incluye cálculos relevantes y contexto contable/financiero
 
-### 🔄 ANÁLISIS COMPARATIVO AUTOMÁTICO (2 documentos):
+### 🔄 ANÁLISIS COMPARATIVO AUTOMÁTICO (2+ documentos):
 **IMPORTANTE: Cuando recibas datos de DOS hojas/archivos, SIEMPRE realiza lo siguiente:**
 
 1. **IDENTIFICACIÓN AUTOMÁTICA DE CAMPOS SIMILARES:**
@@ -326,7 +355,7 @@ Analiza la información proporcionada de manera exhaustiva y proporciona el nive
 """
     return base_prompt
 
-def query_gemini_api(api_key, model_name, system_prompt_text, messages_content_for_llm, max_output_tokens):
+def query_appia_api(api_key, model_name, system_prompt_text, messages_content_for_llm, max_output_tokens):
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(
         model_name=model_name,
@@ -352,31 +381,31 @@ def query_gemini_api(api_key, model_name, system_prompt_text, messages_content_f
 
 
         if not user_prompt_text:
-            return "Error: No se pudo extraer el contenido del usuario para Gemini."
+            return "Error: No se pudo extraer el contenido del usuario para AppIA."
 
         response = model.generate_content(user_prompt_text) 
         return response.text
     except Exception as e:
         error_msg = str(e).lower()
         if "quota" in error_msg:
-             return f"Error al consultar a Gemini: Se ha excedido la cuota de la API. Por favor, revisa tu plan y uso en Google AI Studio. (Detalle: {str(e)})"
+             return f"Error al consultar a AppIA: Se ha excedido la cuota de la API. Por favor, revisa tu plan y uso en Google AI Studio. (Detalle: {str(e)})"
         elif "api key not valid" in error_msg:
-            return f"Error al consultar a Gemini: La API key no es válida. Por favor, verifica tu API Key. (Detalle: {str(e)})"
+            return f"Error al consultar a AppIA: La API key no es válida. Por favor, verifica tu API Key. (Detalle: {str(e)})"
         elif "not found" in error_msg or "not supported" in error_msg:
-            return f"Error al consultar a Gemini: El modelo '{model_name}' no está disponible. Esto puede deberse a que el modelo no existe o no está disponible en tu región. (Detalle: {str(e)})"
+            return f"Error al consultar a AppIA: El modelo '{model_name}' no está disponible. Esto puede deberse a que el modelo no existe o no está disponible en tu región. (Detalle: {str(e)})"
         elif "response.prompt_feedback" in error_msg and "block_reason" in error_msg:
-            return f"Error al consultar a Gemini: La solicitud fue bloqueada por políticas de seguridad. (Detalle: {str(e)})"
+            return f"Error al consultar a AppIA: La solicitud fue bloqueada por políticas de seguridad. (Detalle: {str(e)})"
         else:
-            return f"Error al consultar a Gemini: {str(e)}"
+            return f"Error al consultar a AppIA: {str(e)}"
 
 
 def query_llm(selected_sheets_data_info, question, generate_charts_flag=True): 
-    """Prepara y envía la consulta al LLM Gemini."""
+    """Prepara y envía la consulta al LLM AppIA."""
     
     # Obtener API key desde variables de entorno
     api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
     if not api_key:
-        return "Error: No se encontró la API key de Gemini. Por favor, configura GOOGLE_GEMINI_API_KEY en el archivo .env"
+        return "Error: No se encontró la API key de AppIA. Por favor, configura GOOGLE_GEMINI_API_KEY en el archivo .env"
     
     # Lista de modelos en orden de preferencia
     models_to_try = [
@@ -385,7 +414,7 @@ def query_llm(selected_sheets_data_info, question, generate_charts_flag=True):
         "gemini-pro"
     ]
     
-    max_output_tokens_config = GEMINI_MAX_OUTPUT_TOKENS
+    max_output_tokens_config = APPIA_MAX_OUTPUT_TOKENS
     
     system_prompt = get_system_prompt(generate_charts_flag) 
     
@@ -479,7 +508,7 @@ def query_llm(selected_sheets_data_info, question, generate_charts_flag=True):
     last_error = None
     for model_name in models_to_try:
         try:
-            result = query_gemini_api(api_key, model_name, system_prompt, messages_for_llm, max_output_tokens_config)
+            result = query_appia_api(api_key, model_name, system_prompt, messages_for_llm, max_output_tokens_config)
             # Si no hay error en el resultado, retornarlo
             if not result.startswith("Error al consultar a Gemini:"):
                 return result
@@ -496,28 +525,77 @@ def query_llm(selected_sheets_data_info, question, generate_charts_flag=True):
 
 # --- Generación y Extracción de Gráficos ---
 def extract_chart_suggestions(response_text):
-    """Extrae las especificaciones de gráficos del JSON en la respuesta del LLM."""
-    if not response_text: return [] # Manejar respuesta vacía
-    pattern = r"SUGERENCIAS_DE_VISUALIZACIÓN:[\s]*```json\s*([\s\S]*?)\s*```"
-    matches = re.search(pattern, response_text)
+    """Extrae las especificaciones de gráficos del JSON en la respuesta del LLM de manera robusta."""
+    if not response_text: 
+        return []
     
-    if not matches:
+    # Múltiples patrones para detectar JSON de gráficos en diferentes formatos
+    patterns = [
+        r"SUGERENCIAS_DE_VISUALIZACIÓN:[\s]*```json\s*([\s\S]*?)\s*```",
+        r"SUGERENCIAS_DE_VISUALIZACIÓN:[\s]*```\s*([\s\S]*?)\s*```", 
+        r"```json\s*(\[[\s\S]*?\])\s*```",  # JSON directo
+        r"```\s*(\[[\s\S]*?\])\s*```",     # JSON sin especificar lenguaje
+        r"(\[[\s]*\{[\s\S]*?\}[\s]*\])",   # JSON sin marcadores de código
+    ]
+    
+    json_str = None
+    matched_pattern = None
+    
+    for i, pattern in enumerate(patterns):
+        matches = re.search(pattern, response_text, re.IGNORECASE)
+        if matches:
+            json_str = matches.group(1).strip()
+            matched_pattern = i + 1
+            st.info(f"🔍 JSON encontrado usando patrón {matched_pattern}")
+            break
+    
+    if not json_str:
+        # Buscar cualquier array JSON que contenga objetos con 'tipo' y 'titulo'
+        json_array_pattern = r'(\[[\s\S]*?"tipo"[\s\S]*?"titulo"[\s\S]*?\])'
+        matches = re.search(json_array_pattern, response_text, re.IGNORECASE)
+        if matches:
+            json_str = matches.group(1).strip()
+            st.info("🔍 JSON encontrado mediante búsqueda de estructura de gráficos")
+    
+    if not json_str:
+        st.warning("⚠️ No se encontraron sugerencias de visualización en la respuesta")
         return []
     
     try:
-        json_str = matches.group(1).strip()
-        json_str = re.sub(r",\s*([\}\]])", r"\1", json_str) # Corregir comas finales
+        # Limpiar el JSON antes de parsearlo
+        json_str = re.sub(r",\s*([\}\]])", r"\1", json_str)  # Eliminar comas finales
+        json_str = re.sub(r'(["\'])\s*\n\s*(["\'])', r'\1\2', json_str)  # Unir strings divididos
+              
         chart_specs = json.loads(json_str)
+        
         if isinstance(chart_specs, dict): 
             chart_specs = [chart_specs]
+        
+        st.success(f"✅ Se extrajeron {len(chart_specs)} especificaciones de gráficos")
         return chart_specs
+        
     except json.JSONDecodeError as e:
-        st.error(f"Error al decodificar JSON de sugerencias de gráficos: {e}")
-        st.text_area("JSON con error (para depuración):", json_str, height=150)
-        return []
+        st.error(f"❌ Error al decodificar JSON de gráficos: {e}")
+        st.text_area("JSON con error:", json_str, height=200, key="error_json_debug")
+        
+        # Intentar reparar JSON común
+        try:
+            # Reparaciones comunes
+            fixed_json = json_str
+            fixed_json = re.sub(r'(["\'])\s*\n\s*(["\'])', r'\1\2', fixed_json)
+            fixed_json = re.sub(r',(\s*[}\]])', r'\1', fixed_json)
+            
+            chart_specs = json.loads(fixed_json)
+            if isinstance(chart_specs, dict): 
+                chart_specs = [chart_specs]
+            st.success(f"✅ JSON reparado exitosamente. {len(chart_specs)} gráficos encontrados")
+            return chart_specs
+        except:
+            st.error("❌ No se pudo reparar el JSON automáticamente")
+            return []
+        
     except Exception as e: 
-        st.error(f"Error inesperado al extraer sugerencias de gráficos: {e}")
-        st.text_area("Texto donde se buscó el JSON (para depuración):", response_text, height=150)
+        st.error(f"❌ Error inesperado al extraer gráficos: {e}")
         return []
 
 def generate_charts(chart_specs, all_dataframes_dict):
@@ -737,7 +815,7 @@ def generate_charts(chart_specs, all_dataframes_dict):
     return charts
 
 # --- Interfaz de Streamlit ---
-st.set_page_config(page_title="Analizador Contable Excel IA (Gemini)", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Analizador Contable Excel con AppIA", page_icon="📊", layout="wide")
 
 # --- Estilos CSS Personalizados ---
 st.markdown("""
@@ -770,8 +848,8 @@ st.markdown("""
 </style>""", unsafe_allow_html=True)
 
 
-st.title("📊 Analizador de Excel con IA")
-st.markdown("**Carga tus archivos Excel y haz preguntas en lenguaje natural. La IA analizará los datos y generará respuestas con gráficos automáticamente.**")
+st.title("📊 Analizador de Excel con AppIA")
+st.markdown("**Carga tus archivos Excel y haz preguntas en lenguaje natural. AppIA analizará los datos y generará respuestas con gráficos automáticamente.**")
 
 # Sidebar
 with st.sidebar:
@@ -787,7 +865,7 @@ with st.sidebar:
 
     st.subheader("📁 Carga de Archivos")
     uploaded_files = st.file_uploader(
-        "Carga 1 o 2 archivos Excel (.xlsx, .xls)", 
+        "Carga de 1 a 5 archivos Excel (.xlsx, .xls)", 
         type=["xlsx", "xls"], 
         accept_multiple_files=True,
         key="file_uploader"
@@ -812,7 +890,7 @@ with st.sidebar:
         - 📊 Filas máximas por hoja: **{DEFAULT_MAX_ROWS:,}**
         - 📈 Gráficos automáticos: **Activado**
         - 📋 Análisis estadístico: **Activado**
-        - 🤖 Modelo de IA: **Gemini Pro (mejor disponible)**
+        - 🤖 Modelo de IA: **AppIA Pro (mejor disponible)**
         
         *Estos ajustes garantizan el mejor análisis posible.*
         """)
@@ -851,9 +929,11 @@ if uploaded_files and (current_uploaded_files_names != st.session_state.get("las
     st.session_state.selected_sheet_info_1 = None 
     st.session_state.selected_sheet_info_2 = None 
     
-    if len(uploaded_files) > 2:
-        st.warning("Por favor, carga un máximo de dos archivos Excel. Se procesarán los dos primeros.")
-        actual_files_to_process = uploaded_files[:2] 
+    # Permitir hasta 5 archivos para análisis empresarial robusto
+    max_files_allowed = 5
+    if len(uploaded_files) > max_files_allowed:
+        st.warning(f"Por favor, carga un máximo de {max_files_allowed} archivos Excel. Se procesarán los primeros {max_files_allowed}.")
+        actual_files_to_process = uploaded_files[:max_files_allowed] 
     else:
         actual_files_to_process = uploaded_files
 
@@ -928,72 +1008,91 @@ if st.session_state.processed_excel_data_info_full:
             selected_data_for_llm = [st.session_state.selected_sheet_info_1]
             sheet_selection_ui_completed = True
 
-    elif len(file_names_processed) == 2:
-        file_name1, file_name2 = file_names_processed[0], file_names_processed[1]
-        sheets_in_file1 = files_data[file_name1]
-        sheets_in_file2 = files_data[file_name2]
-
-        sheet_options1_map = {f"{s['sheet_name']} ({s['rows_processed']} filas proc.)": s['file_sheet_key'] for s in sheets_in_file1}
-        sheet_options2_map = {f"{s['sheet_name']} ({s['rows_processed']} filas proc.)": s['file_sheet_key'] for s in sheets_in_file2}
-
-        # Agregar indicadores visuales claros de comparación
-        st.markdown("### 🔄 **Configuración de Comparación entre Documentos**")
-        st.info("⚠️ **Importante:** Selecciona una hoja de cada archivo. El sistema automáticamente **comparará y buscará relaciones** entre ambos documentos.")
+    elif len(file_names_processed) >= 2:
+        # Interfaz para múltiples documentos (2-5 archivos)
+        st.markdown(f"### 🗂️ **Configuración de Análisis Multi-Documento ({len(file_names_processed)} archivos)**")
+        st.info("💡 **AppIA analizará automáticamente las relaciones entre todos los documentos seleccionados.**")
         
-        col_sel1, col_vs, col_sel2 = st.columns([5, 1, 5])
-        with col_sel1:
-            st.markdown("#### 📄 **Documento A**")
-            if sheets_in_file1:
-                selected_sheet_display1 = st.selectbox(
-                    f"**{file_name1}**",
-                    options=list(sheet_options1_map.keys()),
-                    key="sheet_select_file1_display",
-                    index=0,
-                    help="Selecciona la hoja del primer documento que se usará para la comparación"
-                )
-                selected_sheet_key1 = sheet_options1_map.get(selected_sheet_display1)
-                st.session_state.selected_sheet_info_1 = next((s for s in sheets_in_file1 if s['file_sheet_key'] == selected_sheet_key1), None)
+        # Crear una lista para almacenar todas las hojas seleccionadas
+        selected_sheets_info = []
+        
+        # Crear columnas dinámicamente basadas en el número de archivos
+        if len(file_names_processed) <= 3:
+            cols = st.columns(len(file_names_processed))
+        else:
+            # Para más de 3 archivos, usar filas múltiples
+            cols_per_row = 3
+            rows_needed = (len(file_names_processed) + cols_per_row - 1) // cols_per_row
+            
+        sheet_selection_widgets = []
+        
+        for idx, file_name in enumerate(file_names_processed):
+            sheets_in_file = files_data[file_name]
+            sheet_options_map = {f"{s['sheet_name']} ({s['rows_processed']} filas proc.)": s['file_sheet_key'] for s in sheets_in_file}
+            
+            # Determinar en qué columna colocar el widget
+            if len(file_names_processed) <= 3:
+                col = cols[idx]
             else:
-                st.warning(f"El archivo '{file_name1}' no contiene hojas procesables.")
-                st.session_state.selected_sheet_info_1 = None
-
-        with col_vs:
-            st.markdown("<div style='text-align: center; padding-top: 60px;'><h2>⚡<br>VS<br>⚡</h2></div>", unsafe_allow_html=True)
-
-        with col_sel2:
-            st.markdown("#### 📄 **Documento B**")
-            if sheets_in_file2:
-                selected_sheet_display2 = st.selectbox(
-                    f"**{file_name2}**",
-                    options=list(sheet_options2_map.keys()),
-                    key="sheet_select_file2_display",
-                    index=0,
-                    help="Selecciona la hoja del segundo documento que se usará para la comparación"
-                )
-                selected_sheet_key2 = sheet_options2_map.get(selected_sheet_display2)
-                st.session_state.selected_sheet_info_2 = next((s for s in sheets_in_file2 if s['file_sheet_key'] == selected_sheet_key2), None)
-            else:
-                st.warning(f"El archivo '{file_name2}' no contiene hojas procesables.")
-                st.session_state.selected_sheet_info_2 = None
-
-        if st.session_state.selected_sheet_info_1 and st.session_state.selected_sheet_info_2:
-            selected_data_for_llm = [st.session_state.selected_sheet_info_1, st.session_state.selected_sheet_info_2]
+                # Para layouts más complejos, usar contenedores secuenciales
+                if idx % 3 == 0:
+                    col_container = st.container()
+                    current_cols = col_container.columns(min(3, len(file_names_processed) - idx))
+                col = current_cols[idx % 3]
+            
+            with col:
+                st.markdown(f"#### 📄 **Documento {chr(65 + idx)}**")
+                st.caption(f"**{file_name}**")
+                
+                if sheets_in_file:
+                    selected_sheet_display = st.selectbox(
+                        f"Hoja de {file_name[:20]}...",
+                        options=list(sheet_options_map.keys()),
+                        key=f"sheet_select_file{idx}_display",
+                        index=0,
+                        help=f"Selecciona la hoja del documento {chr(65 + idx)} para el análisis"
+                    )
+                    selected_sheet_key = sheet_options_map.get(selected_sheet_display)
+                    selected_sheet_info = next((s for s in sheets_in_file if s['file_sheet_key'] == selected_sheet_key), None)
+                    
+                    if selected_sheet_info:
+                        selected_sheets_info.append(selected_sheet_info)
+                        st.success(f"✅ Seleccionado")
+                    else:
+                        st.error(f"❌ Error en selección")
+                else:
+                    st.warning(f"❌ Sin hojas procesables")
+        
+        # Verificar que todas las selecciones sean válidas
+        if len(selected_sheets_info) == len(file_names_processed) and len(selected_sheets_info) >= 2:
+            selected_data_for_llm = selected_sheets_info
             sheet_selection_ui_completed = True
             
-            # Mensaje de confirmación más claro y detallado
-            st.success("✅ **Comparación configurada exitosamente**")
-            st.markdown(f"""
-            **📊 Análisis Comparativo:**
-            - **Documento A:** `{st.session_state.selected_sheet_info_1['sheet_name']}` de **{file_name1}**
-            - **Documento B:** `{st.session_state.selected_sheet_info_2['sheet_name']}` de **{file_name2}**
+            # Mensaje de confirmación para análisis multi-documento
+            st.success("✅ **Análisis Multi-Documento Configurado Exitosamente**")
             
-            🤖 **El modelo automáticamente:**
-            - Identificará campos similares entre ambos documentos
-            - Buscará datos comparables y relaciones
-            - Generará análisis de diferencias y similitudes
+            documents_list = "\n".join([
+                f"- **Documento {chr(65 + i)}:** `{info['sheet_name']}` de **{info['file_name']}**" 
+                for i, info in enumerate(selected_sheets_info)
+            ])
+            
+            st.markdown(f"""
+            **📊 Análisis Multi-Documento:**
+            {documents_list}
+            
+            🤖 **AppIA realizará automáticamente:**
+            - Identificación de campos similares entre todos los documentos
+            - Análisis de correlaciones y dependencias cruzadas
+            - Detección de patrones comunes y diferencias significativas
+            - Mapeo de relaciones financieras/contables entre archivos
+            - Síntesis integrada con insights únicos del conjunto completo
             """)
-        elif not (st.session_state.selected_sheet_info_1 and st.session_state.selected_sheet_info_2):
-            st.warning("⚠️ **Configuración incompleta:** Asegúrate de seleccionar una hoja válida de cada archivo para habilitar la comparación automática.")
+        else:
+            missing_count = len(file_names_processed) - len(selected_sheets_info)
+            st.warning(f"⚠️ **Configuración incompleta:** Faltan {missing_count} selecciones válidas para completar el análisis multi-documento.")
+    
+    else:
+        st.info("📁 No hay archivos cargados o hay un problema con el procesamiento.")
 
 
     # --- Vista Previa de Datos de Hojas Seleccionadas ---
@@ -1044,37 +1143,74 @@ if st.button("🚀 Analizar y Preguntar", type="primary", use_container_width=Tr
     # Verificar configuración de API
     api_key_check = os.getenv('GOOGLE_GEMINI_API_KEY')
     if not api_key_check:
-        st.error("❌ No se encontró la API key de Gemini. Por favor, configura GOOGLE_GEMINI_API_KEY en el archivo .env")
+        st.error("❌ No se encontró la API key de AppIA. Por favor, configura GOOGLE_GEMINI_API_KEY en el archivo .env")
     elif not user_question:
         st.warning("Por favor, escribe una pregunta.")
     elif not selected_data_for_llm or not sheet_selection_ui_completed: 
         st.warning("Por favor, carga archivos y asegúrate de que las hojas para análisis/comparación estén correctamente seleccionadas y la vista previa se muestre.")
     else:
-        with st.spinner(f"Gemini está analizando tus datos y generando una respuesta... Este proceso puede tardar unos momentos."):
-            try:
-                llm_response_text = query_llm(
-                    selected_data_for_llm, 
-                    user_question,
-                    DEFAULT_GENERATE_CHARTS
-                )
-                st.session_state.llm_response = llm_response_text 
-                
-                cleaned_llm_text = clean_response_text(llm_response_text)
-                st.session_state.cleaned_llm_text = cleaned_llm_text 
-                
-                st.session_state.generated_charts = [] # Limpiar gráficos anteriores
-                if DEFAULT_GENERATE_CHARTS and llm_response_text:
-                    chart_specs_extracted = extract_chart_suggestions(llm_response_text)
-                    if chart_specs_extracted:
-                        generated_plotly_charts = generate_charts(chart_specs_extracted, st.session_state.all_dfs_for_charts)
-                        st.session_state.generated_charts = generated_plotly_charts
-            except Exception as e:
-                st.error(f"Ocurrió un error crítico durante el análisis con Gemini: {str(e)}")
-                import traceback
-                st.exception(traceback.format_exc()) # Muestra el traceback completo en la UI
-                st.session_state.llm_response = f"Error en la ejecución: {str(e)}" # Guardar el error para mostrarlo
-                st.session_state.cleaned_llm_text = None
-                st.session_state.generated_charts = []
+        # Crear contenedor para estado de espera que cubra toda la pantalla
+        progress_container = st.empty()
+        
+        with progress_container.container():
+            # Pantalla de espera completa
+            st.markdown("""
+            <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                        background-color: rgba(255, 255, 255, 0.95); z-index: 9999; 
+                        display: flex; flex-direction: column; justify-content: center; 
+                        align-items: center; backdrop-filter: blur(3px);">
+                <div style="text-align: center; background: white; padding: 3rem; 
+                           border-radius: 15px; box-shadow: 0 8px 32px rgba(0,0,0,0.1); 
+                           border: 1px solid rgba(255,255,255,0.2);">
+                    <h1 style="color: #1E88E5; margin-bottom: 2rem;">🤖 AppIA está procesando</h1>
+                    <div style="font-size: 1.2rem; color: #666; margin-bottom: 2rem; line-height: 1.6;">
+                        🔍 <strong>Analizando datos...</strong><br>
+                        📊 <strong>Identificando patrones...</strong><br>
+                        📈 <strong>Generando visualizaciones...</strong><br>
+                        💡 <strong>Creando insights profesionales...</strong>
+                    </div>
+                    <div style="color: #888; font-style: italic;">
+                        Este proceso puede tardar entre 30 segundos a 2 minutos<br>
+                        dependiendo de la complejidad de los datos
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        try:
+            llm_response_text = query_llm(
+                selected_data_for_llm, 
+                user_question,
+                DEFAULT_GENERATE_CHARTS
+            )
+            st.session_state.llm_response = llm_response_text 
+            
+            cleaned_llm_text = clean_response_text(llm_response_text)
+            st.session_state.cleaned_llm_text = cleaned_llm_text 
+            
+            st.session_state.generated_charts = [] # Limpiar gráficos anteriores
+            if DEFAULT_GENERATE_CHARTS and llm_response_text:
+                chart_specs_extracted = extract_chart_suggestions(llm_response_text)
+                if chart_specs_extracted:
+                    generated_plotly_charts = generate_charts(chart_specs_extracted, st.session_state.all_dfs_for_charts)
+                    st.session_state.generated_charts = generated_plotly_charts
+                    
+            # Limpiar la pantalla de espera
+            progress_container.empty()
+            
+            # Forzar rerun para mostrar resultados
+            st.rerun()
+            
+        except Exception as e:
+            # Limpiar la pantalla de espera en caso de error
+            progress_container.empty()
+            
+            st.error(f"Ocurrió un error crítico durante el análisis con AppIA: {str(e)}")
+            import traceback
+            st.exception(traceback.format_exc()) # Muestra el traceback completo en la UI
+            st.session_state.llm_response = f"Error en la ejecución: {str(e)}" # Guardar el error para mostrarlo
+            st.session_state.cleaned_llm_text = None
+            st.session_state.generated_charts = []
 
 # Mostrar resultados si existen
 if st.session_state.get("llm_response"):
@@ -1087,7 +1223,7 @@ if st.session_state.get("llm_response"):
     tab_analisis, tab_graficos, tab_detalles = st.tabs(["📝 **Análisis Detallado**", "📈 **Visualizaciones**", "🔍 **Información Técnica**"])
     
     with tab_analisis:
-        st.markdown("### 💡 **Respuesta del Asistente IA (Gemini)**")
+        st.markdown("### 💡 **Respuesta del Asistente AppIA**")
         
         # Mostrar cleaned_llm_text si existe y no está vacío, sino mostrar llm_response (que podría ser un error)
         response_to_display = st.session_state.cleaned_llm_text if st.session_state.cleaned_llm_text else st.session_state.llm_response
@@ -1158,11 +1294,11 @@ if st.session_state.get("llm_response"):
         elif DEFAULT_GENERATE_CHARTS and "SUGERENCIAS_DE_VISUALIZACIÓN" in (st.session_state.llm_response or ""):
             # Este caso es si hubo sugerencias pero no se pudieron generar los gráficos
             st.subheader("📈 Visualizaciones Sugeridas")
-            st.warning("⚠️ Gemini intentó sugerir visualizaciones, pero no se pudieron extraer o generar correctamente. Revisa la pestaña 'Información Técnica' para ver el JSON completo.")
+            st.warning("⚠️ AppIA intentó sugerir visualizaciones, pero no se pudieron extraer o generar correctamente. Revisa la pestaña 'Información Técnica' para ver el JSON completo.")
         
         elif DEFAULT_GENERATE_CHARTS: # Si la opción está activa pero no hay gráficos ni sugerencias
             st.subheader("📈 Visualizaciones")
-            st.info("ℹ️ Gemini no sugirió visualizaciones específicas para esta consulta, o no se pudieron generar gráficos con los datos disponibles.")
+            st.info("ℹ️ AppIA no sugirió visualizaciones específicas para esta consulta, o no se pudieron generar gráficos con los datos disponibles.")
     
     with tab_detalles:
         st.markdown("### 🔍 **Información Técnica**")
@@ -1174,7 +1310,7 @@ if st.session_state.get("llm_response"):
                 st.markdown(f"- **{info['file_name']}** → Hoja: `{info['sheet_name']}` ({info['rows_processed']} filas procesadas)")
         
         # Respuesta completa del modelo
-        with st.expander("🤖 Ver respuesta completa de Gemini (incluye JSON de gráficos si existe)"):
+        with st.expander("🤖 Ver respuesta completa de AppIA (incluye JSON de gráficos si existe)"):
             st.text_area(
                 "Respuesta Completa:", 
                 st.session_state.llm_response or "No hay respuesta completa disponible.", 
@@ -1190,7 +1326,7 @@ if st.session_state.get("llm_response"):
             - 📊 Filas máximas procesadas: **{DEFAULT_MAX_ROWS:,}**
             - 📈 Gráficos automáticos: **{'Activado' if DEFAULT_GENERATE_CHARTS else 'Desactivado'}**
             - 📋 Análisis estadístico: **{'Incluido' if DEFAULT_INCLUDE_STATS else 'No incluido'}**
-            - 🤖 Modelo de IA: **Gemini (mejor disponible)**
+            - 🤖 Modelo de IA: **AppIA (mejor disponible)**
             """)
 
 
@@ -1219,8 +1355,8 @@ with st.expander("ℹ️ Información técnica (para desarrolladores)"):
     st.markdown(f"""
     - **Modelos disponibles:** {", ".join(models_list)} (se prueba automáticamente en orden de preferencia)
     - **Modelo preferido:** {DEFAULT_MODEL}
-    - **Tokens máximos de entrada:** {GEMINI_MAX_INPUT_TOKENS:,}
-    - **Tokens máximos de salida:** {GEMINI_MAX_OUTPUT_TOKENS:,}
+    - **Tokens máximos de entrada:** {APPIA_MAX_INPUT_TOKENS:,}
+    - **Tokens máximos de salida:** {APPIA_MAX_OUTPUT_TOKENS:,}
     - **Filas por defecto:** {DEFAULT_MAX_ROWS}
     - **Temperatura:** 0.7 (equilibrio entre creatividad y precisión)
     - **Fallback automático:** Si un modelo no está disponible, se intenta el siguiente
