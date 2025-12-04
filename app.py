@@ -17,12 +17,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuración de tokens máximos para AppIA
-APPIA_MAX_INPUT_TOKENS = 2097152  # Máximo para modelos AppIA avanzados
-APPIA_MAX_OUTPUT_TOKENS = 8192    # Máximo de salida
+APPIA_MAX_INPUT_TOKENS = 1048576  # Máximo para modelos AppIA avanzados
+APPIA_MAX_OUTPUT_TOKENS = 65536    # Máximo de salida
 
 # Configuración predeterminada
-DEFAULT_MODEL = "gemini-2.5-pro"  # Modelo estable y disponible
-DEFAULT_MAX_ROWS = 20000  # Análisis más completo por defecto
+DEFAULT_MODEL = "gemini-3-pro-preview"  # Modelo estable y disponible
+DEFAULT_MAX_ROWS = 100000  # Análisis más completo por defecto
 DEFAULT_INCLUDE_STATS = True  # Siempre incluir análisis estadístico
 DEFAULT_GENERATE_CHARTS = True  # Siempre generar gráficos automáticamente
 
@@ -299,6 +299,12 @@ Procura no decir que tienes pocos datos, intenta hacer las relaciones siempre.
 
 ### 🏦 ANÁLISIS ESPECÍFICO DE DATOS BANCARIOS (CRÍTICO):
 **IMPORTANTE:** Para datos bancarios, SIEMPRE procesa cada banco/cuenta/entidad de manera INDIVIDUAL:
+
+#### 🚫 PROHIBICIONES ESTRICTAS (CRÍTICO):
+1. **NO AGRUPAR POR NOMBRE SIMILAR:** Si ves "Banco X Cuenta 1" y "Banco X Cuenta 2", son DOS entidades distintas. NUNCA las sumes en una sola fila llamada "Banco X".
+2. **NO ASUMIR:** Si no estás seguro si son la misma cuenta, trátalas como diferentes.
+3. **TABLA DE ENTIDADES:** Tu primera acción SIEMPRE debe ser listar todas las cuentas/bancos únicos detectados en una tabla.
+
 - **NUNCA agrupes bancos diferentes** aunque tengan nombres similares (ej: Bancolombia Cuenta-A vs Bancolombia Cuenta-B son DIFERENTES)
 - **Identifica cada banco por su nombre COMPLETO** incluyendo números de cuenta, sucursales, o cualquier identificador único
 - **Analiza cada entidad bancaria por separado** con sus propios totales, promedios, y tendencias
@@ -309,6 +315,9 @@ Procura no decir que tienes pocos datos, intenta hacer las relaciones siempre.
   * Banco Popular Principal vs Banco Popular Sucursal Norte
   * BBVA Empresarial vs BBVA Personal
   * Cualquier variación en nombre, número, o denominación
+
+### 📋 PASO OBLIGATORIO 1: LISTADO DE ENTIDADES
+Antes de cualquier análisis, genera una tabla Markdown listando TODAS las cuentas o entidades únicas encontradas en los datos, con sus nombres exactos tal como aparecen en el archivo.
 
 ### 📊 ANÁLISIS INDIVIDUAL (1 documento):
 - Proporciona análisis **EXTENSO y DETALLADO** (mínimo 300-500 palabras)
@@ -463,7 +472,7 @@ def query_llm(selected_sheets_data_info, question, generate_charts_flag=True):
             
             # MEJORA 3: Límite de longitud para la muestra JSON.
             # Este límite es para el string JSON, no para el número de filas directamente.
-            MAX_SAMPLE_JSON_LEN = 70000 # Ajustar según necesidad y pruebas con Gemini
+            MAX_SAMPLE_JSON_LEN = 500000 # Aumentado para aprovechar ventana de contexto de Gemini 1.5 Pro
             
             if len(sample_json_str) > MAX_SAMPLE_JSON_LEN: 
                 num_records_original_in_sample = len(sample_data_to_send) 
@@ -1213,6 +1222,7 @@ if st.button("🚀 Analizar y Preguntar", type="primary", use_container_width=Tr
                     <h1 style="color: #1E88E5; margin-bottom: 2rem;">🤖 App Medellin IA está procesando</h1>
                     <div style="font-size: 1.2rem; color: #666; margin-bottom: 2rem; line-height: 1.6;">
                         🔍 <strong>Analizando datos...</strong><br>
+                        📋 <strong>Separando entidades y cuentas...</strong><br>
                         📊 <strong>Identificando patrones...</strong><br>
                         📈 <strong>Generando visualizaciones...</strong><br>
                         💡 <strong>Creando insights profesionales...</strong>
@@ -1396,16 +1406,3 @@ st.markdown("""
 
 **💡 Nota:** La aplicación está preconfigurada con los mejores ajustes para análisis de datos. No necesitas configurar parámetros técnicos.
 """)
-
-# Mostrar información de configuración al final para desarrolladores
-with st.expander("ℹ️ Información técnica (para desarrolladores)"):
-    models_list = ["gemini-1.5-pro-latest", "gemini-1.5-flash-latest", "gemini-pro"]
-    st.markdown(f"""
-    - **Modelos disponibles:** {", ".join(models_list)} (se prueba automáticamente en orden de preferencia)
-    - **Modelo preferido:** {DEFAULT_MODEL}
-    - **Tokens máximos de entrada:** {APPIA_MAX_INPUT_TOKENS:,}
-    - **Tokens máximos de salida:** {APPIA_MAX_OUTPUT_TOKENS:,}
-    - **Filas por defecto:** {DEFAULT_MAX_ROWS}
-    - **Temperatura:** 0.7 (equilibrio entre creatividad y precisión)
-    - **Fallback automático:** Si un modelo no está disponible, se intenta el siguiente
-    """)
