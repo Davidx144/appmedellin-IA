@@ -418,9 +418,7 @@ def query_llm(selected_sheets_data_info, question, generate_charts_flag=True):
     
     # Lista de modelos en orden de preferencia
     models_to_try = [
-        "gemini-1.5-pro-latest",
-        "gemini-1.5-flash-latest", 
-        "gemini-pro"
+        "gemini-3-pro-preview"
     ]
     
     max_output_tokens_config = APPIA_MAX_OUTPUT_TOKENS
@@ -472,7 +470,7 @@ def query_llm(selected_sheets_data_info, question, generate_charts_flag=True):
             
             # MEJORA 3: Límite de longitud para la muestra JSON.
             # Este límite es para el string JSON, no para el número de filas directamente.
-            MAX_SAMPLE_JSON_LEN = 500000 # Aumentado para aprovechar ventana de contexto de Gemini 1.5 Pro
+            MAX_SAMPLE_JSON_LEN = 1048576 # Aumentado para aprovechar ventana de contexto de Gemini 1.5 Pro
             
             if len(sample_json_str) > MAX_SAMPLE_JSON_LEN: 
                 num_records_original_in_sample = len(sample_data_to_send) 
