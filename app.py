@@ -22,7 +22,7 @@ APPIA_MAX_OUTPUT_TOKENS = 65536    # Máximo de salida
 
 # Configuración predeterminada
 DEFAULT_MODEL = "gemini-3-pro-preview"  # Modelo estable y disponible
-DEFAULT_MAX_ROWS = 100000  # Análisis más completo por defecto
+DEFAULT_MAX_ROWS = 1000000  # Análisis más completo por defecto
 DEFAULT_INCLUDE_STATS = True  # Siempre incluir análisis estadístico
 DEFAULT_GENERATE_CHARTS = True  # Siempre generar gráficos automáticamente
 
@@ -227,8 +227,22 @@ def get_single_excel_data_info(excel_file_bytes, file_name, max_rows_limit, incl
             
             categorical_cols = df_limited.select_dtypes(include=['object', 'category']).columns
             for col in categorical_cols:
-                if df_limited[col].nunique() < 30 and df_limited[col].nunique() > 0 : 
+                # Lógica mejorada para capturar entidades bancarias y nombres importantes
+                # Si la columna parece contener nombres de entidades, aumentamos el límite y forzamos la inclusión
+                col_lower = str(col).lower()
+                is_key_col = any(key in col_lower for key in ['banco', 'nombre', 'cuenta', 'entidad', 'tercero', 'detalle', 'beneficiario'])
+                
+                # Límite base 30, pero 200 para columnas clave para asegurar que entren todos los bancos
+                limit = 200 if is_key_col else 30
+                
+                unique_count = df_limited[col].nunique()
+                
+                if unique_count < limit and unique_count > 0: 
                     info[f"value_counts_{col}"] = convert_datetime_keys(df_limited[col].value_counts().to_dict())
+                elif is_key_col and unique_count > 0:
+                     # Si excede el límite pero es columna clave, enviamos los top 200 valores para maximizar cobertura
+                     # Esto es crítico para que el LLM vea "IDEA", "BANCO OCCIDENTE", etc. aunque estén al final o sean pocos
+                     info[f"top_values_{col}"] = convert_datetime_keys(df_limited[col].value_counts().head(200).to_dict())
         
         info["data_types"] = {str(col): str(dtype) for col, dtype in df_limited.dtypes.items()}
         
@@ -298,23 +312,29 @@ Procura no decir que tienes pocos datos, intenta hacer las relaciones siempre.
 ## RESPONSABILIDADES PRINCIPALES:
 
 ### 🏦 ANÁLISIS ESPECÍFICO DE DATOS BANCARIOS (CRÍTICO):
-**IMPORTANTE:** Para datos bancarios, SIEMPRE procesa cada banco/cuenta/entidad de manera INDIVIDUAL:
+**IMPORTANTE:** Para datos bancarios, SIEMPRE procesa cada banco/cuenta/entidad de manera INDIVIDUAL.
+Recuerda que los bancos pueden ser: **IDEA, BANCO OCCIDENTE, BANCOLOMBIA, DAVIVIENDA e ITAU**.
+
+**REGLA DE ORO PARA IDENTIFICACIÓN:**
+En las columnas "Cuenta" sabremos cuando son bancos diferentes.
+- Todas las cuentas de bancos suelen empezar por **1110**.
+- **Si tienen número de cuenta diferente, SON BANCOS/ENTIDADES DIFERENTES**, aunque su nombre empiece igual.
+- **DISCRIMINACIÓN POR CONVENIO:** Requiero que discrimines por banco incluyendo la discriminación por convenio. Cada convenio debe tratarse como una cuenta separada y listada individualmente en el análisis.
+
+**EJEMPLOS DE ENTIDADES DISTINTAS (NO AGRUPAR):**
+1. **BANCO OCCIDENTE -PEMP MACARENA** y **BANCO DE OCCIDENTE - AMVA** son bancos/entidades DISTINTAS.
+2. **IDEA RECURSOS DESTINACIÓN ESPECIFICA N°200000663** y **IDEA RECURSOS DESTINACIÓN ESPECIFICA N°200000793-SIF-COMUNA 10- CI-4600105503** son entidades DISTINTAS porque tienen cuentas distintas.
 
 #### 🚫 PROHIBICIONES ESTRICTAS (CRÍTICO):
 1. **NO AGRUPAR POR NOMBRE SIMILAR:** Si ves "Banco X Cuenta 1" y "Banco X Cuenta 2", son DOS entidades distintas. NUNCA las sumes en una sola fila llamada "Banco X".
 2. **NO ASUMIR:** Si no estás seguro si son la misma cuenta, trátalas como diferentes.
 3. **TABLA DE ENTIDADES:** Tu primera acción SIEMPRE debe ser listar todas las cuentas/bancos únicos detectados en una tabla.
 
-- **NUNCA agrupes bancos diferentes** aunque tengan nombres similares (ej: Bancolombia Cuenta-A vs Bancolombia Cuenta-B son DIFERENTES)
-- **Identifica cada banco por su nombre COMPLETO** incluyendo números de cuenta, sucursales, o cualquier identificador único
-- **Analiza cada entidad bancaria por separado** con sus propios totales, promedios, y tendencias
-- **Reporta diferencias entre bancos/cuentas** de manera individual y específica
-- **Lista todos los bancos encontrados** con sus características únicas antes del análisis
-- **Ejemplos de entidades DIFERENTES que NO se deben agrupar:**
-  * Bancolombia-1234 vs Bancolombia-5678 (cuentas diferentes)
-  * Banco Popular Principal vs Banco Popular Sucursal Norte
-  * BBVA Empresarial vs BBVA Personal
-  * Cualquier variación en nombre, número, o denominación
+- **NUNCA agrupes bancos diferentes** aunque tengan nombres similares.
+- **Identifica cada banco por su nombre COMPLETO** incluyendo números de cuenta, sucursales, convenios o cualquier identificador único.
+- **Analiza cada entidad bancaria por separado** con sus propios totales, promedios, y tendencias.
+- **Reporta diferencias entre bancos/cuentas** de manera individual y específica.
+- **Lista todos los bancos encontrados** con sus características únicas antes del análisis.
 
 ### 📋 PASO OBLIGATORIO 1: LISTADO DE ENTIDADES
 Antes de cualquier análisis, genera una tabla Markdown listando TODAS las cuentas o entidades únicas encontradas en los datos, con sus nombres exactos tal como aparecen en el archivo.
@@ -463,6 +483,9 @@ def query_llm(selected_sheets_data_info, question, generate_charts_flag=True):
             if key.startswith("value_counts_"):
                 col_name_vc = key.replace("value_counts_", "")
                 sheet_details_text += f"- Conteo de Valores ('{col_name_vc}'):\n{json.dumps(val_counts, indent=2, ensure_ascii=False)}\n"
+            elif key.startswith("top_values_"):
+                col_name_vc = key.replace("top_values_", "")
+                sheet_details_text += f"- Valores Principales (Top 200) ('{col_name_vc}'):\n{json.dumps(val_counts, indent=2, ensure_ascii=False)}\n"
 
         sample_data_to_send = data_info['data_sample_json']
         try:
@@ -470,7 +493,12 @@ def query_llm(selected_sheets_data_info, question, generate_charts_flag=True):
             
             # MEJORA 3: Límite de longitud para la muestra JSON.
             # Este límite es para el string JSON, no para el número de filas directamente.
-            MAX_SAMPLE_JSON_LEN = 1048576 # Aumentado para aprovechar ventana de contexto de Gemini 1.5 Pro
+            # Ajuste dinámico basado en el número de hojas seleccionadas para no exceder el límite de tokens.
+            # 1M tokens ~= 3.5M caracteres (estimado conservador).
+            # Reservamos espacio para el prompt del sistema y overhead.
+            TOTAL_AVAILABLE_CHARS = 3000000 
+            num_sheets = len(selected_sheets_data_info)
+            MAX_SAMPLE_JSON_LEN = int(TOTAL_AVAILABLE_CHARS / num_sheets) if num_sheets > 0 else TOTAL_AVAILABLE_CHARS
             
             if len(sample_json_str) > MAX_SAMPLE_JSON_LEN: 
                 num_records_original_in_sample = len(sample_data_to_send) 
