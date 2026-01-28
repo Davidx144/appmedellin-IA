@@ -496,7 +496,7 @@ def query_llm(selected_sheets_data_info, question, generate_charts_flag=True):
             # Ajuste dinámico basado en el número de hojas seleccionadas para no exceder el límite de tokens.
             # 1M tokens ~= 3.5M caracteres (estimado conservador).
             # Reservamos espacio para el prompt del sistema y overhead.
-            TOTAL_AVAILABLE_CHARS = 3000000 
+            TOTAL_AVAILABLE_CHARS = 1000000 
             num_sheets = len(selected_sheets_data_info)
             MAX_SAMPLE_JSON_LEN = int(TOTAL_AVAILABLE_CHARS / num_sheets) if num_sheets > 0 else TOTAL_AVAILABLE_CHARS
             
